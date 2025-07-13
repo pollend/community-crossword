@@ -1,18 +1,9 @@
 const std = @import("std");
 const zap = @import("zap");
 const WebSockets = zap.WebSockets;
-
-const Context = struct {
-    userName: []const u8,
-    channel: []const u8,
-    // we need to hold on to them and just re-use them for every incoming
-    // connection
-    subscribeArgs: WebsocketHandler.SubscribeArgs,
-    settings: WebsocketHandler.WebSocketSettings,
-};
-//
-//
-const WebsocketHandler = WebSockets.Handler(Context);
+const state = @import("state.zig");
+const client = @import("client.zig");
+const game = @import("game.zig");
 
 fn on_upgrade(r: zap.Request, target_protocol: []const u8) !void {
     // make sure we're talking the right protocol
@@ -22,12 +13,12 @@ fn on_upgrade(r: zap.Request, target_protocol: []const u8) !void {
         r.sendBody("400 - BAD REQUEST") catch unreachable;
         return;
     }
-    //var context = GlobalContextManager.newContext() catch |err| {
-    //    std.log.err("Error creating context: {any}", .{err});
-    //    return;
-    //};
 
-    //try WebsocketHandler.upgrade(r.h, &context.settings);
+    _ = client.Client.upgrade(state.allocator, r) catch |e| {
+        std.log.err("Error upgrading client: {any}", .{e});
+        return;
+    };
+
     std.log.info("connection upgrade OK", .{});
 }
 
@@ -43,11 +34,27 @@ pub fn main() !void {
     // Prints to stderr (it's a shortcut based on `std.io.getStdErr()`)
     std.debug.print("All your {s} are belong to us.\n", .{"codebase"});
 
-    //var gpa = std.heap.GeneralPurposeAllocator(.{
-    //    .thread_safe = true,
-    //}){};
-    //const allocator = gpa.allocator(); 
+    var gpa = std.heap.GeneralPurposeAllocator(.{
+        .thread_safe = true,
+    }){};
+    const allocator = gpa.allocator(); 
+    
+    state.allocator = allocator;
+    state.clients = state.ClientArrayList.init(allocator);
+    state.board = try game.create_empty_board(32, 32, allocator);
+    defer {
+        state.clients.deinit();
+        state.board.deinit();
+    }
 
+    state.board.blocks[0].input[0] = game.Cell{
+        .value = game.CallValue.a,
+        .lock = 0,
+    };
+    state.board.blocks[0].input[1] = game.Cell{
+        .value = game.CallValue.b,
+        .lock = 1,
+    };
     // setup listener
     var listener = zap.HttpListener.init(
         .{
