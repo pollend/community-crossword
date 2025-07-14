@@ -3,16 +3,57 @@ const crossword_dict = @import("crossword_dict.zig");
 const sqlite = @import("sqlite");
 const crossword = @import("crossword.zig");
 const set = @import("ziglangSet");
+const assert = std.debug.assert;
 
 // constants to generate the board
-pub const WIDTH = 128;
-pub const HEIGHT = 128;
+pub const WIDTH = 64;
+pub const HEIGHT = 64;
 
+pub const DecisionNodeArrayList = std.ArrayList(*DecisionNode);
 pub const DecisionNode = struct {
     x: usize, 
     y: usize,
-    clue: *crossword.Clue,
+    clue: ?*crossword_dict.Clue,
     dir: crossword.Direction,
+    next: ?*DecisionNode, // Pointer to the next node in the linked list
+    prev: ?*DecisionNode, // Pointer to the previous node in the linked list
+
+    pub fn init(x: usize, y: usize, dir: crossword.Direction, c: ?*crossword_dict.Clue) DecisionNode {
+        return .{
+            .next = null,
+            .prev = null,
+            .x = x,
+            .y = y,
+            .clue = c,
+            .dir = dir,
+        };
+    }
+
+    pub fn detach(self: *DecisionNode) void {
+        if (self.prev) |prev| {
+            prev.next = self.next;
+        }
+        if (self.next) |next| {
+            next.prev = self.prev;
+        }
+        self.prev = null;
+        self.next = null;
+    }
+
+    pub fn append(self: *DecisionNode, pool: *std.heap.MemoryPool(DecisionNode), x: usize, y: usize, dir: crossword.Direction) !*DecisionNode{
+        const child_ptr = try pool.create();
+        child_ptr.* = DecisionNode.init( x, y, dir, null);
+
+        const tmp = self.next;
+        child_ptr.prev = self;
+        self.next = child_ptr;
+        child_ptr.next = tmp;
+        return child_ptr;
+    }
+
+    pub fn deinit(self: *DecisionNode) void {
+        self.children.deinit();
+    }
 };
 
 pub const PosNext = struct {
@@ -78,36 +119,75 @@ pub fn main() !void {
         }
     }
     try bw.flush(); // Don't forget to flush!
+
+    var node_alloc = std.heap.MemoryPool(DecisionNode).init(allocator);
+    const root = try node_alloc.create();
+    root.* = DecisionNode.init(0, 0, crossword.Direction.Across, null);
     
-    //const ProcessSet = set.Set(PosNext);
-    //var process_set = ProcessSet.init(allocator);
-    //var node_stack = std.ArrayList(crossword_dict.Node).init(allocator); 
-    //_ = try process_set.add(PosNext{ .x = 0, .y = 0, .dir = crossword.Direction.Across });
-    //while(true) {
-    //    var iter = process_set.iterator();
-    //    if(iter.next()) |ins| {
-    //        const process: PosNext = ins.*;
-    //        if(process.dir == .Across) {
-    //            var x: usize = process.x;
-    //            var current_node = &dict.root;
-    //            if (board.get(x, process.y)) |c| {
-    //                if(crossword_dict.is_empty(c)) {
-    //                         
-    //                }
-    //            } else {
+    var process_list = std.ArrayList(*DecisionNode).init(allocator);
+    defer process_list.deinit();
+    try process_list.append(root);
 
-    //            }
+    var random = std.crypto.random;
+    while(process_list.pop()) |it|{
+        if(board.get(it.x, it.y).ch == crossword.BLOCK_CHAR) {
+            it.detach(); // Detach the current node from the list
+            node_alloc.destroy(it); // Free the memory for the node
+            continue; // Skip to the next iteration
+        }
 
-    //        } else {
+        std.debug.print("processing node ({d},{d})\n", .{it.x, it.y});
+        if(try board.find_random_valid_clue(
+            &dict,
+            &random,
+            allocator,
+            it.x,
+            it.y,
+            it.dir,
+        )) |c| {
+            var index: usize = 0;
+            if(it.dir == crossword.Direction.Across) {
+                std.debug.print("inserting word across ({d},{d}) {s}\n", .{it.x, it.y, c.word});
+                while(index < c.word.len) : (index += 1) {
+                    assert(it.x + index < board.width);
+                    try board.set_check(it.x + index, it.y, .{ .ch = c.word[index], .cx = 1, .cy = 0 });
+                    if(it.y == 0 or board.get(it.x + index, it.y - 1).ch == crossword.BLOCK_CHAR) {
+                        try process_list.append(try it.append(&node_alloc, it.x + index, it.y, crossword.Direction.Down));
+                    }
+                }
+                try board.set_check(it.x + c.word.len, it.y, .{ .ch = crossword.BLOCK_CHAR, .cx = 1, .cy = 0 });
+                if(it.x + c.word.len + 1 < board.width) {
+                    try process_list.append(try it.append(&node_alloc,it.x + c.word.len + 1, it.y, crossword.Direction.Across));
+                    try process_list.append(try it.append(&node_alloc,it.x + c.word.len + 1, it.y, crossword.Direction.Down));
+                }
+                if(it.x + c.word.len < board.width and it.y + 1 < board.height) {
+                    try process_list.append(try it.append(&node_alloc,it.x + c.word.len, it.y, crossword.Direction.Across));
+                    try process_list.append(try it.append(&node_alloc,it.x + c.word.len, it.y, crossword.Direction.Down));
+                }
+            } else {
+                std.debug.print("inserting word down ({d},{d}) {s}\n", .{it.x, it.y, c.word});
+                while(index < c.word.len) : (index += 1) {
+                    assert(it.y + index < board.width);
+                    try board.set_check(it.x, it.y + index, .{ .ch = c.word[index], .cy = 1, .cx = 0 });
+                    if(it.x == 0 or board.get(it.x - 1, it.y + index).ch == crossword.BLOCK_CHAR) {
+                        try process_list.append(try it.append(&node_alloc, it.x, it.y + index, crossword.Direction.Across));
+                    }
+                }
+                try board.set_check(it.x, it.y + c.word.len, .{ .ch = crossword.BLOCK_CHAR, .cy = 1, .cx = 0 });
+                if(it.y + c.word.len + 1 < board.height) {
+                    try process_list.append(try it.append(&node_alloc,it.x, it.y + c.word.len + 1, crossword.Direction.Across));
+                    try process_list.append(try it.append(&node_alloc,it.x, it.y + c.word.len + 1, crossword.Direction.Down));
+                }
+                if(it.x + 1 < board.width and it.y + c.word.len < board.height) {
+                    try process_list.append(try it.append(&node_alloc,it.x, it.y + c.word.len, crossword.Direction.Across));
+                    try process_list.append(try it.append(&node_alloc,it.x, it.y + c.word.len, crossword.Direction.Down));
+                }
+            }
+        } else {
+            std.debug.print("no valid clue found for node ({d},{d})\n", .{it.x, it.y});
+        }
+    }
 
-    //        }
-    //        
-
-    //        _ = process_set.remove(process);
-    //    } else {
-    //        break;
-    //    }
-    //}
 }
 
 
