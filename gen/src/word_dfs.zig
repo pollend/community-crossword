@@ -128,27 +128,24 @@ pub fn backtrack(
     while(self.collection.pop()) |item| {
         switch(item) {
             .wildcard => |w| {
-                var i: usize = 0;
-                while(i < crossword_dict.NUM_CHARACTERS) : (i = (i + 1) % crossword_dict.NUM_CHARACTERS) {
-                    if (w.node.children[w.index]) |node| {
+                var i: usize = w.index;
+                while(i < crossword_dict.NUM_CHARACTERS) {
+                    i = (i + 1) % crossword_dict.NUM_CHARACTERS; 
+                    if(i == w.start_index) 
+                        break;
+                    if (w.node.children[i]) |_| {
                         try self.collection.append(.{
                             .wildcard = .{
                                 .index = i,
                                 .start_index = w.start_index,
-                                .node = node,
+                                .node = w.node,
                             },
                         });
                         return true; // Successfully backtracked
                     }
-                    if(i + 1 == w.start_index) {
-                        break; // We have looped through all characters
-                    }
                 }
-                
             },
-            .fixed => |_| {
-                _ = self.collection.pop(); 
-            },
+            .fixed => |_| {},
         }
     }
     return false;
@@ -159,22 +156,23 @@ pub fn append_wildcard(
     self: *WordDFS,
     random: *std.Random,
 ) !bool {
-    self.start = false; 
     if(self.collection.getLastOrNull()) |last| {
         switch(last) {
             .wildcard => |w| {
                 try self.collection.append(init_wildcard(w.node.children[w.index].?, random) orelse return false);
-                return true; // Successfully appended a wildcard item
+                return true; 
             },
             .fixed => |f| {
                 try self.collection.append(init_wildcard(f.node.children[f.index].?, random) orelse return false);
-                return false; // No valid character for this node
+                return true;
             },
         }
-    } else {
+    } else if(self.start == true) {
+        self.start = false; 
         try self.collection.append(init_wildcard(&self.dict.root, random) orelse return false);
-        return true; // Successfully appended a wildcard item
+        return true;
     }
+    return false;
 }
 
 
@@ -182,7 +180,6 @@ pub fn append_fixed(
     self: *WordDFS,
     value: u8
 ) !bool {
-    self.start = false; 
     if(crossword_dict.ascii_to_index(value)) |idx| {
         if(self.collection.getLastOrNull()) |last| {
             switch(last) {
@@ -195,10 +192,12 @@ pub fn append_fixed(
                     return true; // Successfully appended a fixed item
                 },
             }
-        } else {
+        } else if(self.start == true) {
+            self.start = false; 
             try self.collection.append(init_fixed(&self.dict.root, idx) orelse return false);
             return true; // Successfully appended a fixed item
         }
+        return false;
     }
     return error.InvalidCharacter; // No valid character for this node
 }
