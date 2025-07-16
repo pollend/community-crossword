@@ -5,8 +5,8 @@ const crossword = @import("crossword.zig");
 const set = @import("ziglangSet");
 const assert = std.debug.assert;
 const word_dfs = @import("word_dfs.zig");
-pub const WIDTH = 16;
-pub const HEIGHT = 16;
+pub const WIDTH = 128;
+pub const HEIGHT = 128;
 
 pub const BLOCK_CHAR = '@'; // Character used to represent a blocked cell
 
@@ -17,19 +17,53 @@ pub const Solver = struct {
     cells: []Cell, 
     valid_start_cells: ValidCellsSet, 
     clue_pool: CluePool,
+    next: ?*ClueCrossing,
     pub fn init(allocator: std.mem.Allocator) !Solver {
         const solver = try allocator.alloc(Cell, WIDTH * HEIGHT);
         for (solver) |*cell| cell.reset(); 
         return .{
+            .next = null, 
             .cells = solver,
             .valid_start_cells = ValidCellsSet.init(allocator),
             .clue_pool = CluePool.init(allocator),
         };
     }
+
     pub fn deinit(self: *Solver) void {
         self.valid_start_cells.deinit();
         self.clue_pool.deinit();
         self.cells = undefined; // Free the cells array
+    }
+
+    pub fn create_crossing(self: *Solver, pos: CellPos, dir: Direction, clue: *crossword_dict.Clue) !*ClueCrossing {
+        const crossing = try self.clue_pool.create();
+        errdefer self.clue_pool.destroy(crossing);
+        crossing.* = .{
+            .x = pos.x,
+            .y = pos.y,
+            .dir = dir,
+            .clue = clue,
+            .next = null,
+            .prev = null,
+        };
+        crossing.next = self.next;
+        if(self.next) |cross| {
+            cross.prev = crossing; // Link the previous crossing to the new one
+        }
+        self.next = crossing;
+        return crossing;
+    }
+
+    pub fn free_crossing(self: *Solver, crossing: *ClueCrossing) void {
+        if (crossing.prev) |prev| {
+            prev.next = crossing.next; // Link the previous crossing to the next one
+        } else {
+            self.next = crossing.next; // Update the head of the list
+        }
+        if (crossing.next) |next| {
+            next.prev = crossing.prev; // Link the next crossing to the previous one
+        }
+        self.clue_pool.destroy(crossing);
     }
 };
 
@@ -64,12 +98,32 @@ const Direction = enum(u1) {
     Down,
 };
 
+pub const ClueCrossingIterator = struct {
+    current: ?*ClueCrossing,
+    pub fn next(self: *ClueCrossingIterator) ?*ClueCrossing {
+        if (self.current) |crossing| {
+            self.current = crossing.next;
+            return crossing;
+        }
+        return null; // No more crossings
+    }
+};
 
 const ClueCrossing = struct {
     x: usize, 
     y: usize, 
     dir: Direction, 
     clue: *crossword_dict.Clue,
+
+    next: ?*ClueCrossing,
+    prev: ?*ClueCrossing,
+
+
+    pub fn iterator(self: *ClueCrossing) ClueCrossingIterator {
+        return .{
+            .current = self,
+        };
+    }
 };
 
 pub const CellPos = struct {
@@ -135,15 +189,9 @@ pub fn insert_clue_start_cell(
     clue: *crossword_dict.Clue,
 ) !void {
     assert(x < WIDTH and y < HEIGHT);
+    const ins = try solver.create_crossing(.{.x = x, .y = y}, dir, clue);
+    errdefer solver.free_crossing(ins);
     if(dir == .Across) {
-        const ins = try solver.clue_pool.create();
-        errdefer solver.clue_pool.destroy(ins);
-        ins.* = .{
-            .x = x,
-            .y = y,
-            .dir = .Across,
-            .clue = clue,
-        };
         var i: usize = 0;
         while (i < clue.word.len) : (i += 1) {
             assert(x + i < WIDTH and y < HEIGHT);
@@ -169,14 +217,6 @@ pub fn insert_clue_start_cell(
             }
         }
     } else {
-        const ins = try solver.clue_pool.create();
-        errdefer solver.clue_pool.destroy(ins);
-        ins.* = .{
-            .x = x,
-            .y = y,
-            .dir = .Down,
-            .clue = clue,
-        };
         var i: usize = 0;
         while (i < clue.word.len) : (i += 1) {
             solver_assert(solver,x < WIDTH and y + i < HEIGHT); // Ensure we are within bounds
@@ -285,7 +325,7 @@ pub fn main() !void {
             answer: []const u8,
         };
         try stdout.print("fetching clues from database...\n", .{});
-        var stmt = try db.prepare("SELECT clue, answer FROM clues LIMIT 6000");
+        var stmt = try db.prepare("SELECT clue, answer FROM clues");
         defer stmt.deinit();
         var iter = try stmt.iterator(Row, .{});
         var inserted: usize = 0;
@@ -400,6 +440,46 @@ pub fn main() !void {
         } 
     }
     print_cells(&solver);
+
+    var file = try std.fs.cwd().createFile("crossword.map", .{ .truncate = true });
+    defer file.close();
+    var writer = file.writer();
+
+    try writer.writeInt(u32, WIDTH, .little);
+    try writer.writeInt(u32, HEIGHT, .little);
+    if(solver.next) |first_crossing| {
+        var it = first_crossing.iterator();
+        while (it.next()) |crossing| {
+            try writer.writeInt(u32, @intCast(crossing.x), .little);
+            try writer.writeInt(u32, @intCast(crossing.y), .little);
+            try writer.writeInt(u8, @intFromEnum(crossing.dir), .little);
+            try writer.writeInt(u32, @intCast(crossing.clue.word.len), .little);
+            try writer.writeAll(crossing.clue.word);
+            try writer.writeInt(u32, @intCast(crossing.clue.clue.len), .little);
+            try writer.writeAll(crossing.clue.clue);
+            //try writer.print("{d},{d},{s},{s},{s}\n", .{
+            //    crossing.x,
+            //    crossing.y,
+            //    if (crossing.dir == .Across) "across" else "down",
+            //    crossing.clue.word,
+            //    crossing.clue.clue
+            //});
+        }
+    } 
+
+    //try writer.print("{d},{d}\n", .{WIDTH, HEIGHT});
+    //if(solver.next) |first_crossing| {
+    //    var it = first_crossing.iterator();
+    //    while (it.next()) |crossing| {
+    //        try writer.print("{d},{d},{s},{s},{s}\n", .{
+    //            crossing.x,
+    //            crossing.y,
+    //            if (crossing.dir == .Across) "across" else "down",
+    //            crossing.clue.word,
+    //            crossing.clue.clue
+    //        });
+    //    }
+    //} 
 }
 
 

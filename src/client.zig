@@ -1,7 +1,6 @@
 const std = @import("std");
 const zap = @import("zap");
 const WebSockets = zap.WebSockets;
-const state = @import("state.zig");
 const WebsocketHandler = WebSockets.Handler(Client);
 const game = @import("game.zig");
 
@@ -20,12 +19,12 @@ view: game.GridRect,
 ready: bool,
 allocator: std.mem.Allocator,
 pub fn upgrade(allocator: std.mem.Allocator,r: zap.Request) !*Client {
-    state.client_lock.lock();
-    defer state.client_lock.unlock();
-    const client = try state.allocator.create(Client);
+    game.state.client_lock.lock();
+    defer game.state.client_lock.unlock();
+    const client = try game.state.allocator.create(Client);
     errdefer client.deinit();
-    const client_channel = try std.fmt.allocPrint(allocator, "c-{any}", .{state.client_id});
-    state.client_id += 1;
+    const client_channel = try std.fmt.allocPrint(allocator, "c-{any}", .{game.state.client_id});
+    game.state.client_id += 1;
 
     client.* = .{
         .allocator = allocator,
@@ -41,7 +40,7 @@ pub fn upgrade(allocator: std.mem.Allocator,r: zap.Request) !*Client {
         .view = .{ .x = 0, .y = 0, .width = 0, .height = 0 },
     };
     try WebsocketHandler.upgrade(r.h, &client.settings);
-    try state.clients.append(client);
+    try game.state.clients.append(client);
     return client;
 }
 
@@ -51,16 +50,16 @@ pub fn deinit(self: *Client) void {
 
 fn on_close_websocket(client: ?*Client, _: isize) !void {
     if(client) |c| {
-        state.client_lock.lock();
-        defer state.client_lock.unlock();
+        game.state.client_lock.lock();
+        defer game.state.client_lock.unlock();
         var i: usize = 0;
-        while(i < state.clients.items.len) : (i += 1) {
-            if (state.clients.items[i] == c) {
-                _ = state.clients.orderedRemove(i);
+        while(i < game.state.clients.items.len) : (i += 1) {
+            if (game.state.clients.items[i] == c) {
+                _ = game.state.clients.orderedRemove(i);
                 break;
             }
         }
-        state.allocator.destroy(c); 
+        game.state.allocator.destroy(c); 
     }
 }
 
@@ -79,10 +78,10 @@ fn update_view(client: ?*Client, rect: game.GridRect) !void {
         var y = span_y[0];
         while(x < span_x[1]) : (x += 1) {
             while(y < span_y[1]) : (y += 1) {
-                if(game.blockPosToBlockIndex(state.board.width, state.board.height, x, y)) |idx| {
-                    try msg_sync_block(c, &state.board.blocks[idx]);
-                    std.log.debug("Posted block at index {d} to client {s}", .{idx, c.channel}); 
-                }
+                //if(game.blockPosToBlockIndex(game.state.board_size[0], game.state.board_size[1], x, y)) |idx| {
+                //    try msg_sync_block(c, &state.board.blocks[idx]);
+                //    std.log.debug("Posted block at index {d} to client {s}", .{idx, c.channel}); 
+                //}
             }
         }
         c.view = rect;
