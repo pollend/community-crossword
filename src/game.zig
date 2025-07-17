@@ -3,11 +3,13 @@ const zap = @import("zap");
 const client = @import("client.zig");
 const WebSockets = zap.WebSockets;
 const game = @import("game.zig");
+const rect = @import("rect.zig");
 
 const WebsocketHandler = WebSockets.Handler(client.Client);
 
 pub const ClientArrayList = std.ArrayList(*client.Client);
 pub const ClueList = std.ArrayList(Clue);
+pub const assert = std.debug.assert;
 
 pub const GRID_SIZE: u32 = 32;
 pub const GRID_LEN: u32 = GRID_SIZE * GRID_SIZE;
@@ -17,18 +19,19 @@ pub const Value = enum(u7) {
     black, // black cell
     a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,
 };
-
-pub const GridRect = struct {
-    x: u32,
-    y: u32,
-    width: u32,
-    height: u32,
-
-    pub fn contains(self: *const GridRect, pos: CellPos) bool {
-        return pos.x >= self.x and pos.x < (self.x + self.width) and
-               pos.y >= self.y and pos.y < (self.y + self.height);
-    }
-};
+    
+pub fn map_to_quad(rec: rect.Rect) rect.Rect {
+    const x: u32 = rec.x / GRID_SIZE;
+    const y: u32 = rec.y / GRID_SIZE;
+    const width: u32 = ((rec.x + rec.width) / GRID_SIZE) - x + 1;
+    const height: u32 = ((rec.y + rec.height) / GRID_SIZE) - y + 1;
+    return .{
+        .x = x,
+        .y = y,
+        .width = width, // Round up to the nearest grid size
+        .height = height, // Round up to the nearest grid size
+    };
+}
 
 pub const Cell = packed struct {
     value: Value,
@@ -49,12 +52,8 @@ pub const Direction = enum(u1) {
     Down,
 };
 
-pub const CellPos = struct {
-    x: u32,
-    y: u32,
-};
-
 pub const Clue = struct {
+    id: u32 = 0, // Unique ID for the clue
     word: []Value,
     clue: []const u8,
     pos: @Vector(2, u32),
@@ -97,6 +96,7 @@ pub const Clue = struct {
         }
         return .{
             .word = value,
+            .id = 0, // ID will be set later
             .clue = try allocator.dupe(u8, clue),
             .pos = pos,
             .dir = dir,
@@ -116,8 +116,78 @@ pub const Quad = struct {
     y: u32,
     input: [GRID_LEN]Cell,
     lock: std.Thread.RwLock,
-    clues: std.ArrayList(*Clue)
+    clues: std.ArrayList(*Clue),
+    pub fn init(allocator: std.mem.Allocator, x: u32, y: u32) !Quad {
+        const clues = std.ArrayList(*Clue).init(allocator);
+        return .{
+            .x = x,
+            .y = y,
+            .input = [_]Cell{ .{ .value = Value.black, .lock = 0 } } ** GRID_LEN,
+            .lock = .{},
+            .clues = clues,
+        };
+    }
+
+    pub fn deinit(self: *Quad) void {
+        self.lock.lock();
+        defer self.lock.unlock();
+        self.clues.deinit();
+    }
 };
+
+pub const Board = struct {
+    size: @Vector(2, u32),
+    quads: []Quad,
+
+    pub fn set_value_from_cell_position(self: *Board, pos: @Vector(2, u32), value: Value) bool {
+        if(get_quad_from_cell_pos(self, pos)) |quad| {
+            const cell_x = pos[0] % GRID_SIZE;
+            const cell_y = pos[1] % GRID_SIZE;
+
+            quad.lock.lock();
+            defer quad.lock.unlock();
+
+            const index = (cell_y * GRID_SIZE) + cell_x;
+            quad.input[index].value = value;
+            return true;
+        }
+        return false;
+    }
+    
+    pub fn quad_width(self: *Board) u32 {
+        return self.size[0] / GRID_SIZE;
+    }
+
+    pub fn quad_height(self: *Board) u32 {
+        return self.size[1] / GRID_SIZE;
+    }
+
+    pub fn get_quad(self: *Board, pos: @Vector(2, u32)) ?*Quad {
+        const quad_x = pos[0];
+        const quad_y = pos[1];
+        if (quad_x >= self.quad_width() or quad_y >= self.quad_height()) {
+            return null;
+        }
+        const index = (quad_y * self.quad_width()) + quad_x;
+        const quad = &self.quads[index];
+        assert(quad.x == quad_x and quad.y == quad_y);
+        return quad;
+    }
+
+    pub fn get_quad_from_cell_pos(self: *Board, pos: @Vector(2, u32)) ?*Quad {
+        const quad_x = pos[0] / GRID_SIZE;
+        const quad_y = pos[1] / GRID_SIZE;
+        if (quad_x >= self.quad_width() or quad_y >= self.quad_height()) {
+            return null;
+        }
+        const index = (quad_y * self.quad_width()) + quad_x;
+        const quad = &self.quads[index];
+        assert(quad.x == quad_x and quad.y == quad_y);
+        return quad;
+    }
+
+};
+
 
 pub const State = struct {
     client_id: u32, 
@@ -125,61 +195,76 @@ pub const State = struct {
     clients: ClientArrayList,
 
     allocator: std.mem.Allocator,
-    board_size: @Vector(2, u32),
-    quads: []Quad,
     clues: ClueList,
+    board: Board,
 
-    pub fn quad_width(self: *State) u32 {
-        return self.board_width / GRID_SIZE;
-    }
-
-    pub fn quad_height(self: *State) u32 {
-        return self.board_height / GRID_SIZE;
-    }
 
     pub fn deinit(self: *State) void {
+        for (self.board.quads) |*quad| quad.deinit();
+        for (self.clues.items) |*clue| clue.deinit();
         self.clients.deinit();
-        //self.clues.deinit();
-        //if (self.quads) |q| {
-        //    self.allocator.free(q);
-        //}
+        self.clues.deinit();
+        self.allocator.free(self.board.quads);
     }
 
     pub fn init(allocator: std.mem.Allocator, width: u32, height: u32, clues: ClueList) !State {
+        std.debug.print("Initializing game state with width: {d}, height: {d} clues: {d}\n", .{width, height, clues.items.len});
         if(width % GRID_SIZE != 0 or height % GRID_SIZE != 0) {
             std.log.err("Width and height must be multiples of {d}", .{GRID_SIZE});
             return error.SizeNotMultipleOfGridSize;
         }
+
         if (width == 0 or height == 0) {
             std.log.err("Width and height must be greater than 0", .{});
             return error.InvalidSize;
         }
-        const quads = try allocator.alignedAlloc(
-            Quad,
-            @alignOf(Quad),
-            @sizeOf(Quad) * ((width / GRID_SIZE) * (height / GRID_SIZE)),
-        );
+
+        const quads = try allocator.alloc(Quad, (width / GRID_SIZE) * (height / GRID_SIZE)); // Initial capacity for clients
+        for(quads, 0..) |*quad,index| {
+            const quad_x = index % (width / GRID_SIZE);
+            const quad_y = index / (width / GRID_SIZE);
+            quad.* = try Quad.init(allocator,  @intCast(quad_x), @intCast(quad_y));
+        }
+
+        var board: Board = .{
+            .size = .{ width, height },
+            .quads = quads,
+        };
+
+        var id: u32= 0;
+        for(clues.items) |*clue| {
+            id += 1;
+            clue.id = id; // Assign a unique ID to the clue
+            switch(clue.dir) {
+                .Across => {
+                    for(clue.word, 0..) |_, index| {
+                        const pos = @Vector(2, u32){ clue.pos[0] + @as(u32, @intCast(index)), clue.pos[1] };
+                        if (!board.set_value_from_cell_position(pos, Value.empty)) {
+                            std.log.err("Failed to set value for clue at position {any}", .{pos});
+                        }
+                    }
+                },
+                .Down => {
+                    for(clue.word, 0..) |_, index| {
+                        const pos = @Vector(2, u32){ clue.pos[0], clue.pos[1] + @as(u32, @intCast(index)) };
+                        if (!board.set_value_from_cell_position(pos, Value.empty)) {
+                            std.log.err("Failed to set value for clue at position {any}", .{pos});
+                        }
+                    }
+                },
+            }
+        }
 
         return .{
             .allocator = allocator,
             .client_id = 0,
             .client_lock = .{},
             .clients = ClientArrayList.init(allocator),
+            .board = board,
 
             .clues = clues,
-            .board_size = .{ width, height },
-            .quads = quads, 
         };
     }
 
-    pub fn get_quad_from_cell_pos(self: *State, pos: CellPos) ?*Quad {
-        const quad_x = pos.x / GRID_SIZE;
-        const quad_y = pos.y / GRID_SIZE;
-        if (quad_x >= self.quad_width() or quad_y >= self.quad_height()) {
-            return null;
-        }
-        const index = (quad_y * self.quad_width()) + quad_x;
-        return &self.quads[index];
-    }
 };
 pub var state: State = undefined; 

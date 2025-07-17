@@ -3,6 +3,7 @@ const zap = @import("zap");
 const WebSockets = zap.WebSockets;
 const client = @import("client.zig");
 const game = @import("game.zig");
+const rect = @import("rect.zig");
 
 fn on_upgrade(r: zap.Request, target_protocol: []const u8) !void {
     // make sure we're talking the right protocol
@@ -117,38 +118,17 @@ fn load_board(allocator: std.mem.Allocator, path: []const u8, board_width: *u32,
 }
 
 pub fn main() !void {
-    // Prints to stderr (it's a shortcut based on `std.io.getStdErr()`)
-    std.debug.print("All your {s} are belong to us.\n", .{"codebase"});
-
     var gpa = std.heap.GeneralPurposeAllocator(.{
         .thread_safe = true,
     }){};
     const allocator = gpa.allocator(); 
-
     var clues = game.ClueList.init(allocator);
     var board_width: u32 = 0;
     var board_height: u32 = 0;
     try load_board(allocator, "./crossword.map", &board_width, &board_height, &clues);
-    game.state = try game.State.init(allocator,32,32, clues);
+    game.state = try game.State.init(allocator,board_width,board_height, clues);
     defer game.state.deinit();
 
-    //state.allocator = allocator;
-    //state.clients = state.ClientArrayList.init(allocator);
-    //state.board = try game.create_empty_board(32, 32, allocator);
-    //defer {
-    //    state.clients.deinit();
-    //    state.board.deinit();
-    //}
-
-    //state.board.blocks[0].input[0] = game.Cell{
-    //    .value = game.CallValue.a,
-    //    .lock = 0,
-    //};
-    //state.board.blocks[0].input[1] = game.Cell{
-    //    .value = game.CallValue.b,
-    //    .lock = 1,
-    //};
-    // setup listener
     var listener = zap.HttpListener.init(
         .{
             .port = 3010,
@@ -170,5 +150,11 @@ pub fn main() !void {
         .threads = 1,
         .workers = 1,
     });
+}
+
+const expect = std.testing.expect;
+
+test {
+    _ = rect;
 }
 

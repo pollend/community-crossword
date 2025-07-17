@@ -457,29 +457,8 @@ pub fn main() !void {
             try writer.writeAll(crossing.clue.word);
             try writer.writeInt(u32, @intCast(crossing.clue.clue.len), .little);
             try writer.writeAll(crossing.clue.clue);
-            //try writer.print("{d},{d},{s},{s},{s}\n", .{
-            //    crossing.x,
-            //    crossing.y,
-            //    if (crossing.dir == .Across) "across" else "down",
-            //    crossing.clue.word,
-            //    crossing.clue.clue
-            //});
         }
     } 
-
-    //try writer.print("{d},{d}\n", .{WIDTH, HEIGHT});
-    //if(solver.next) |first_crossing| {
-    //    var it = first_crossing.iterator();
-    //    while (it.next()) |crossing| {
-    //        try writer.print("{d},{d},{s},{s},{s}\n", .{
-    //            crossing.x,
-    //            crossing.y,
-    //            if (crossing.dir == .Across) "across" else "down",
-    //            crossing.clue.word,
-    //            crossing.clue.clue
-    //        });
-    //    }
-    //} 
 }
 
 
