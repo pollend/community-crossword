@@ -82,13 +82,37 @@ export function valueToChar(value: Value): string {
   throw new Error(`Unknown value ${value}`);
 }
 
+export interface Clue {
+  x: number;
+  y: number;
+  dir: number; // 0 = horizontal, 1 = vertical
+  text: string;
+}
 export interface NetSyncBlock {
   x: number;
   y: number;
   block: number[];
+  clues: Clue[]
 }
 
-export function netParseSyncBlock(
+export interface NetReady {
+  board_width: number;
+  board_height: number;
+}
+
+export function netParseReady(view: DataView, offset: number){
+  const width = view.getUint32(offset, true);
+  offset += 4;
+  const height = view.getUint32(offset, true);
+  offset += 4;
+  return {
+    board_width: width,
+    board_height: height,
+  }
+}
+
+
+export function netParseSyncChunk(
   view: DataView,
   offset: number,
 ): NetSyncBlock {
@@ -101,7 +125,32 @@ export function netParseSyncBlock(
     block.push(view.getUint8(offset));
     offset += 1;
   }
-  return { x, y, block };
+  const numClues = view.getUint16(offset, true);
+  let clues: Clue[] = [];
+  offset += 2;
+  for (let i = 0; i < numClues; i++) {
+    const x = view.getUint8(offset);
+    offset += 1;
+    const y = view.getUint8(offset);
+    offset += 1;
+    const dir = view.getUint8(offset);
+    offset += 1;
+    const clueLength = view.getUint16(offset, true);
+    offset += 2;
+    let tex: string = ""
+    for(let j = 0; j < clueLength; j++) {
+      const ch = view.getUint8(offset);
+      offset += 1;
+      tex += String.fromCharCode(ch);
+    }
+    clues.push({
+      x: x,
+      y: y,
+      dir: dir,
+      text: tex,
+    })
+  }
+  return { x, y, block, clues };
 }
 
 export function netSendViewRect(
@@ -119,6 +168,8 @@ export function netSendViewRect(
   ) {
     return;
   }
+  console.log("sending view rect:", x, y, width, height);
+
   lastSyncedView.set(x, y, width, height);
 
   // 1 byte for ID, 4 bytes each for x, y, width, height

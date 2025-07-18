@@ -10,6 +10,7 @@
     "dev": "vite"
   },
   "dependencies": {
+    "@pixi/ui": "^2.2.4",
     "pixi.js": "^8.8.1"
   },
   "devDependencies": {

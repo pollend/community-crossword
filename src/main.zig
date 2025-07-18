@@ -22,7 +22,6 @@ fn on_upgrade(r: zap.Request, target_protocol: []const u8) !void {
     std.log.info("connection upgrade OK", .{});
 }
 
-
 pub fn on_request(r: zap.Request) !void {
     r.setHeader("Cache-Control", "no-cache") catch unreachable;
     if (r.sendFile("dist/index.html")) {} else |err| {
@@ -31,102 +30,102 @@ pub fn on_request(r: zap.Request) !void {
 }
 
 fn load_board(allocator: std.mem.Allocator, path: []const u8, board_width: *u32, board_height: *u32, clues: *game.ClueList) !void {
-        var file = try std.fs.cwd().openFile(path, .{});
-        defer file.close();
+    var file = try std.fs.cwd().openFile(path, .{});
+    defer file.close();
 
-        var reader = file.reader();
-        board_width.* = reader.readInt(u32, .little) catch |e| {
-            std.log.err("Failed to read map file: {any}", .{e});
-            return e;
+    var reader = file.reader();
+    board_width.* = reader.readInt(u32, .little) catch |e| {
+        std.log.err("Failed to read map file: {any}", .{e});
+        return e;
+    };
+    board_height.* = reader.readInt(u32, .little) catch |e| {
+        std.log.err("Failed to read map file: {any}", .{e});
+        return e;
+    };
+    var buffer = std.ArrayList(u8).init(allocator);
+    defer buffer.deinit();
+    while (true) {
+        buffer.clearRetainingCapacity();
+        const x = reader.readInt(u32, .little) catch |e| switch (e) {
+            error.EndOfStream => break,
+            else => |err| {
+                std.log.err("Failed to read map file: {any}", .{err});
+                return err;
+            },
         };
-        board_height.* = reader.readInt(u32, .little) catch |e| {
-            std.log.err("Failed to read map file: {any}", .{e});
-            return e;
+        const y = reader.readInt(u32, .little) catch |e| switch (e) {
+            error.EndOfStream => break,
+            else => |err| {
+                std.log.err("Failed to read map file: {any}", .{err});
+                return err;
+            },
         };
-        var buffer = std.ArrayList(u8).init(allocator);
-        defer buffer.deinit();
-        while(true) {
-            buffer.clearRetainingCapacity();
-            const x = reader.readInt(u32, .little) catch |e| switch(e) {
-                error.EndOfStream => break,
-                else => |err| {
-                    std.log.err("Failed to read map file: {any}", .{err});
-                    return err;
-                },
-            };
-            const y = reader.readInt(u32, .little) catch |e| switch(e) {
-                error.EndOfStream => break,
-                else => |err| {
-                    std.log.err("Failed to read map file: {any}", .{err});
-                    return err;
-                },
-            };
-            const dir = reader.readInt(u8, .little) catch |e| switch(e) {
-                error.EndOfStream => break,
-                else => |err| {
-                    std.log.err("Failed to read map file: {any}", .{err});
-                    return err;
-                },
-            };
+        const dir = reader.readInt(u8, .little) catch |e| switch (e) {
+            error.EndOfStream => break,
+            else => |err| {
+                std.log.err("Failed to read map file: {any}", .{err});
+                return err;
+            },
+        };
 
-            const word_len = reader.readInt(u32, .little) catch |e| switch(e) {
-                error.EndOfStream => break,
-                else => |err| {
-                    std.log.err("Failed to read map file: {any}", .{err});
-                    return err;
-                },
-            };
-            try buffer.resize(word_len);
-            reader.readNoEof(buffer.items) catch |e| switch(e) {
-                error.EndOfStream => break,
-                else => |err| {
-                    std.log.err("Failed to read map file: {any}", .{err});
-                    return err;
-                },
-            };
-            const clue_len = reader.readInt(u32, .little) catch |e| switch(e) {
-                error.EndOfStream => break,
-                else => |err| {
-                    std.log.err("Failed to read map file: {any}", .{err});
-                    return err;
-                },
-            };
-            try buffer.resize(clue_len + word_len);
-            reader.readNoEof(buffer.items[word_len..]) catch |e| switch(e) {
-                error.EndOfStream => break,
-                else => |err| {
-                    std.log.err("Failed to read map file: {any}", .{err});
-                    return err;
-                },
-            };
-            const word_slice = buffer.items[0..word_len];
-            const clue_slice = buffer.items[word_len..];
-            try clues.append(game.Clue.init_from_ascii(
-                allocator,
-                word_slice,
-                clue_slice,
-                .{
-                     x,
-                     y,
-                },
-                @enumFromInt(dir),
-            ) catch |e| {
-                std.log.err("Failed to create clue: {any} {s} - {s}", .{e, word_slice, clue_slice});
-                return e;
-            });
-        }
+        const word_len = reader.readInt(u32, .little) catch |e| switch (e) {
+            error.EndOfStream => break,
+            else => |err| {
+                std.log.err("Failed to read map file: {any}", .{err});
+                return err;
+            },
+        };
+        try buffer.resize(word_len);
+        reader.readNoEof(buffer.items) catch |e| switch (e) {
+            error.EndOfStream => break,
+            else => |err| {
+                std.log.err("Failed to read map file: {any}", .{err});
+                return err;
+            },
+        };
+        const clue_len = reader.readInt(u32, .little) catch |e| switch (e) {
+            error.EndOfStream => break,
+            else => |err| {
+                std.log.err("Failed to read map file: {any}", .{err});
+                return err;
+            },
+        };
+        try buffer.resize(clue_len + word_len);
+        reader.readNoEof(buffer.items[word_len..]) catch |e| switch (e) {
+            error.EndOfStream => break,
+            else => |err| {
+                std.log.err("Failed to read map file: {any}", .{err});
+                return err;
+            },
+        };
+        const word_slice = buffer.items[0..word_len];
+        const clue_slice = buffer.items[word_len..];
+        try clues.append(game.Clue.init_from_ascii(
+            allocator,
+            word_slice,
+            clue_slice,
+            .{
+                x,
+                y,
+            },
+            @enumFromInt(dir),
+        ) catch |e| {
+            std.log.err("Failed to create clue: {any} {s} - {s}", .{ e, word_slice, clue_slice });
+            return e;
+        });
+    }
 }
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{
         .thread_safe = true,
     }){};
-    const allocator = gpa.allocator(); 
+    const allocator = gpa.allocator();
     var clues = game.ClueList.init(allocator);
     var board_width: u32 = 0;
     var board_height: u32 = 0;
     try load_board(allocator, "./crossword.map", &board_width, &board_height, &clues);
-    game.state = try game.State.init(allocator,board_width,board_height, clues);
+    game.state = try game.State.init(allocator, board_width, board_height, clues);
     defer game.state.deinit();
 
     var listener = zap.HttpListener.init(
@@ -157,4 +156,3 @@ const expect = std.testing.expect;
 test {
     _ = rect;
 }
-

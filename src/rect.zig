@@ -4,7 +4,7 @@ x: u32,
 y: u32,
 width: u32,
 height: u32,
-pub const Rect = @This(); 
+pub const Rect = @This();
 
 pub fn iterator(self: Rect) RectIterator {
     return .{
@@ -21,10 +21,15 @@ pub fn create(x: u32, y: u32, width: u32, height: u32) Rect {
     return .{ .x = x, .y = y, .width = width, .height = height };
 }
 
+pub fn contains_point(self: Rect, point: @Vector(2, u32)) bool {
+    return point[0] >= self.x and point[0] < self.x + self.width and
+        point[1] >= self.y and point[1] < self.y + self.height;
+}
+
 pub fn pad(self: Rect, padding: u32) Rect {
     return .{
-        .x = if(self.x < padding) 0 else self.x - padding,
-        .y = if(self.y < padding) 0 else self.y - padding,
+        .x = if (self.x < padding) 0 else self.x - padding,
+        .y = if (self.y < padding) 0 else self.y - padding,
         .width = self.width + (padding * 2),
         .height = self.height + (padding * 2),
     };
@@ -35,7 +40,7 @@ pub const RectIterator = struct {
     index: @Vector(2, u32),
     pub fn next(self: *RectIterator) ?@Vector(2, u32) {
         const current = self.index;
-        if(current[1] >= self.rect.height) {
+        if (current[1] >= self.rect.height) {
             return null; // No more cells to iterate
         }
         self.index[0] += 1;
@@ -45,7 +50,6 @@ pub const RectIterator = struct {
         return .{ current[0] + self.rect.x, current[1] + self.rect.y };
     }
 };
-
 
 const expect = std.testing.expect;
 test "rectangle iterator" {
