@@ -25,7 +25,7 @@ export class Throttle {
   ) {}
 
   public trigger(): void {
-    const now = Date.now();
+    let now = Date.now();
     if (now - this.lastExecution >= this.delay) {
       this.handler();
       this.lastExecution = now;
@@ -36,8 +36,13 @@ export class Throttle {
     }
     this.timeoutID = setTimeout(() => {
       this.handler();
-      this.lastExecution = Date.now();
+      now = Date.now();
+      if(now - this.lastExecution >= this.delay) {
+        this.trigger();
+      } else {
+        this.lastExecution = Date.now();
+      }
       this.timeoutID = null;
-    }, this.delay);
+    }, now - this.lastExecution);
   }
 }

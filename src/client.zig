@@ -4,8 +4,14 @@ const WebSockets = zap.WebSockets;
 const WebsocketHandler = WebSockets.Handler(Client);
 const game = @import("game.zig");
 const rect = @import("rect.zig");
+const net = @import("net.zig");
 
-const MsgID = enum(u8) { ready, set_view, sync_block, unknown };
+const MsgID = enum(u8) { 
+    ready = 0, 
+    set_view = 1, 
+    sync_block = 2,
+    input_or_sync_cell = 3,
+    unknown };
 
 pub const Client = @This();
 
@@ -69,12 +75,27 @@ fn on_close_websocket(client: ?*Client, _: isize) !void {
     }
 }
 
+
 pub fn msg_parse_view(reader: std.io.AnyReader) !rect.Rect {
     const x = try reader.readInt(u32, .little);
     const y = try reader.readInt(u32, .little);
     const width = try reader.readInt(u32, .little);
     const height = try reader.readInt(u32, .little);
     return rect.create(x, y, width, height);
+}
+
+pub fn msg_sync_cell(client: *Client, pos: @Vector(2, u32), value: game.Cell) !void {
+    var buffer = std.ArrayList(u8).init(client.allocator);
+    defer buffer.deinit();
+    var writer = buffer.writer();
+    try writer.writeByte(@intFromEnum(MsgID.input_or_sync_cell));
+    try writer.writeInt(u32, pos[0], .little);
+    try writer.writeInt(u32, pos[1], .little);
+    try writer.writeInt(u8, value.encode(), .little);
+    WebsocketHandler.write(client.handle, buffer.items, false) catch |err| {
+        std.log.err("Failed to write message: {any}", .{err});
+        return err;
+    };
 }
 
 pub fn msg_ready(client: *Client) !void {
@@ -103,8 +124,8 @@ pub fn msg_sync_block(client: *Client, quad: *game.Quad) !void {
     }
     try writer.writeInt(u16, @intCast(quad.clues.items.len), .little);
     for (quad.clues.items) |clue| {
-        try writer.writeInt(u8, @intCast(clue.pos[0] - quad.x), .little);
-        try writer.writeInt(u8, @intCast(clue.pos[1] - quad.y), .little);
+        try writer.writeInt(u8, @intCast(clue.pos[0] - (quad.x * game.GRID_SIZE)), .little);
+        try writer.writeInt(u8, @intCast(clue.pos[1] - (quad.y * game.GRID_SIZE)), .little);
         try writer.writeInt(u8, @intFromEnum(clue.dir), .little);
         try writer.writeInt(u16, @intCast(clue.clue.len), .little);
         try writer.writeAll(clue.clue);
@@ -149,6 +170,23 @@ fn on_message_websocket(
                         try msg_sync_block(c, quad); // Sync the first block of the quad
                     }
                 }
+            },
+            .input_or_sync_cell => {
+                const input = try net.msg_parse_input(reader.any());
+                if(game.state.board.get_quad_from_cell_pos(input.pos)) |quad| { 
+                    const local_pos = quad.to_local(input.pos);
+                    {
+                        quad.lock.lock();
+                        defer quad.lock.unlock();
+                        var cell = quad.get_cell(local_pos);
+                        if(cell.lock == 1) {
+                            return; // Cell is locked, ignore the input
+                        }
+                        cell.value = input.input;
+                    }
+                    quad.broadcast_cell(local_pos);
+                }
+
             },
             else => {
                 std.log.warn("Received unknown message type {any}", .{msg_id});

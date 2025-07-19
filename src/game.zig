@@ -4,14 +4,13 @@ const client = @import("client.zig");
 const WebSockets = zap.WebSockets;
 const game = @import("game.zig");
 const rect = @import("rect.zig");
-
 const WebsocketHandler = WebSockets.Handler(client.Client);
 
 pub const ClientArrayList = std.ArrayList(*client.Client);
 pub const ClueList = std.ArrayList(Clue);
 pub const assert = std.debug.assert;
 
-pub const GRID_SIZE: u32 = 32;
+pub const GRID_SIZE: u32 = 16;
 pub const GRID_LEN: u32 = GRID_SIZE * GRID_SIZE;
 pub const Value = enum(u7) {
     empty, // empty cell
@@ -62,7 +61,7 @@ pub const Cell = packed struct {
     value: Value,
     lock: u1,
 
-    pub fn encode(self: *Cell) u8 {
+    pub fn encode(self: *const Cell) u8 {
         var value: u8 = @intFromEnum(self.value);
         if (self.lock == 1) {
             value |= 1 << 5; // set the lock bit at position 5
@@ -139,12 +138,43 @@ pub const Quad = struct {
     y: u32,
     input: [GRID_LEN]Cell,
 
-    client_lock: std.Thread.Mutex,
+    client_lock: std.Thread.RwLock,
     clients: std.ArrayList(*client.Client),
 
     lock: std.Thread.RwLock,
     overlapping_clues: std.ArrayList(*Clue), // clues that overlap with this quad
     clues: std.ArrayList(*Clue), // clues that are starting in this quad
+  
+    pub fn to_global(self: *Quad, pos: @Vector(2, u32)) @Vector(2, u32) {
+        assert(pos[0] < GRID_SIZE and pos[1] < GRID_SIZE);
+        return @Vector(2, u32){ self.x * GRID_SIZE + pos[0], self.y * GRID_SIZE + pos[1] };
+    }
+    pub fn to_local(self: *Quad, pos: @Vector(2, u32)) @Vector(2, u32) {
+        assert(pos[0] >= self.x * GRID_SIZE and pos[1] >= self.y * GRID_SIZE);
+        assert(pos[0] < (self.x + 1) * GRID_SIZE and pos[1] < (self.y + 1) * GRID_SIZE);
+        return @Vector(2, u32){ pos[0] % GRID_SIZE, pos[1]  % GRID_SIZE };
+    }
+
+    pub fn get_cell(self: *Quad, pos: @Vector(2, u32)) *Cell {
+        const index = (pos[1] * GRID_SIZE) + pos[0];
+        assert(index < GRID_LEN);
+        return &self.input[index];
+    }
+
+    pub fn broadcast_cell(self: *Quad, pos: @Vector(2, u32)) void {
+        const cell = self.get_cell(pos);
+        const global_pos = self.to_global(pos);
+        self.client_lock.lockShared();
+        defer self.client_lock.unlockShared();
+        self.lock.lockShared();
+        defer self.lock.unlockShared();
+
+        for(self.clients.items) |c| {
+            client.msg_sync_cell(c, global_pos, cell.*) catch |err| {
+                std.log.err("Failed to sync cell to client: {any}", .{err});
+            };
+        }
+    }
     
     pub fn init(allocator: std.mem.Allocator, x: u32, y: u32) !Quad {
         return .{
