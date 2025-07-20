@@ -88,7 +88,7 @@ export class Quad {
           const tex = textPool.get();
           tex.anchor.set(0, 1);
           tex.style = clueNumberStyle;
-          tex.text = cellNumber + "";
+          tex.text = (cellNumber + 1) + "";
           tex.x = px * GRID_CELL_PX;
           tex.y = py * GRID_CELL_PX + GRID_CELL_PX;
           this.container.addChild(tex);

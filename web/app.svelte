@@ -23,7 +23,7 @@
   import { graphicDrawRect } from "./graphic";
   import { Throttle } from "./timing";
   import { Direction, type Clue, MouseState } from "./types";
-    import { GRID_CELL_PX, GRID_SIZE } from "./constants";
+  import { GRID_CELL_PX, GRID_SIZE } from "./constants";
 
   let frame: HTMLDivElement | undefined = $state.raw(undefined);
   let app: Application = new Application();
@@ -36,63 +36,71 @@
   let stageDragPosition = new Point(0, 0);
   let quads: Quad[] = [];
 
+  let highlightSlotsVertical: number[] = $state([]);
+  let highlightSlotHorizontal: number[] = $state([]);
+
   interface ClueSlots {
     pos: Point; // Position of the clue in grid cells
-    hor: Clue | undefined 
-    ver: Clue | undefined
+    hor: Clue | undefined;
+    ver: Clue | undefined;
   }
-  let clueSlots: (ClueSlots | undefined)[] = $state([]); 
+  let clueSlots: (ClueSlots | undefined)[] = $state([]);
+  let hightligthSlots: number[] = $state([]);
 
-  const refreshQuads = new Throttle(300, () => {
+  const refreshQuads = new Throttle(100, () => {
     const updated: Quad[] = [];
     const viewCells = getViewRectCells();
     const viewQuad = getViewRectQuad(viewCells);
-    for(let i = 0; i < clueSlots.length; i++) {
+    for (let i = 0; i < clueSlots.length; i++) {
       const clue = clueSlots[i];
-      if(clue === undefined) continue;
-      if(!viewCells.contains(clue.pos.x, clue.pos.y)) {
+      if (clue === undefined) continue;
+      if (!viewCells.contains(clue.pos.x, clue.pos.y)) {
         clueSlots[i] = undefined;
       }
     }
 
     for (let x = viewQuad.left; x <= viewQuad.right; x++) {
       for (let y = viewQuad.top; y <= viewQuad.bottom; y++) {
-        const foundQuadIdx = quads.findIndex((q) => q.pos.x === x && q.pos.y === y);
-        if(foundQuadIdx !== -1) {
-          const updateQuad = quads.splice(foundQuadIdx, 1)[0]
+        const foundQuadIdx = quads.findIndex(
+          (q) => q.pos.x === x && q.pos.y === y,
+        );
+        if (foundQuadIdx !== -1) {
+          const updateQuad = quads.splice(foundQuadIdx, 1)[0];
           updateQuad.clueNumbers.fill(-1);
-          for(const clue of updateQuad.clues) {
-            const clusePos = new Point(clue.x + (updateQuad.pos.x * GRID_SIZE), clue.y + (updateQuad.pos.y * GRID_SIZE));
-            if(!viewCells.contains(clusePos.x, clusePos.y))
-              continue;
+          for (const clue of updateQuad.clues) {
+            const clusePos = new Point(
+              clue.x + updateQuad.pos.x * GRID_SIZE,
+              clue.y + updateQuad.pos.y * GRID_SIZE,
+            );
+            if (!viewCells.contains(clusePos.x, clusePos.y)) continue;
 
             const emptyIdx = clueSlots.findIndex((cl) => cl === undefined);
             const targetIdx = clueSlots.findIndex((cl) => {
-              if(cl === undefined) return false;
+              if (cl === undefined) return false;
               return cl.pos.x === clusePos.x && cl.pos.y === clusePos.y;
             });
             let idx = 0;
-            if(targetIdx >= 0) {
+            if (targetIdx >= 0) {
               clueSlots[targetIdx] = {
                 pos: new Point(clusePos.x, clusePos.y),
                 hor: clue.dir === 0 ? clue : clueSlots[targetIdx]?.hor,
                 ver: clue.dir === 1 ? clue : clueSlots[targetIdx]?.ver,
               };
-              idx = targetIdx + 1;
-            } else if(emptyIdx >= 0) {
+              idx = targetIdx;
+            } else if (emptyIdx >= 0) {
               clueSlots[emptyIdx] = {
                 pos: new Point(clusePos.x, clusePos.y),
                 hor: clue.dir === 0 ? clue : undefined,
                 ver: clue.dir === 1 ? clue : undefined,
               };
-              idx = emptyIdx + 1;
+              idx = emptyIdx;
             } else {
               clueSlots.push({
                 pos: new Point(clusePos.x, clusePos.y),
                 hor: clue.dir === 0 ? clue : undefined,
                 ver: clue.dir === 1 ? clue : undefined,
               });
-              idx = clueSlots.length;
+              idx = clueSlots.length - 1;
             }
             updateQuad.clueNumbers[clue.y * GRID_SIZE + clue.x] = idx;
           }
@@ -101,16 +109,16 @@
         }
       }
     }
-    for(const q of quads) {
+    for (const q of quads) {
       q.destroy();
     }
     quads = updated;
   });
 
-  const syncViewThrottle = new Throttle(500, () => {
+  const syncViewThrottle = new Throttle(100, () => {
     const view = getViewRect();
-    const x = Math.floor((view.x) / GRID_CELL_PX);
-    const y = Math.floor((view.y) / GRID_CELL_PX);
+    const x = Math.floor(view.x / GRID_CELL_PX);
+    const y = Math.floor(view.y / GRID_CELL_PX);
     const width = Math.floor((view.width + view.x) / GRID_CELL_PX) - x;
     const height = Math.floor((view.height + view.y) / GRID_CELL_PX) - y;
     netSendViewRect(socket!, x, y, width, height);
@@ -118,20 +126,35 @@
 
   let boardSize = new Point(0, 0);
 
+  let selectionDir: number= $state(Direction.Horizontal);
   let selection: {
-    terminated: boolean,
+    terminated: boolean;
     center: Point | undefined;
-    dir: Direction; // 0 = horizontal, 1 = vertical
   } = {
     terminated: false,
     center: new Point(1, 1),
-    dir: 0, // 0 = horizontal, 1 = vertical
   };
+
+  function getChunkAndIndex(
+    x: number,
+    y: number,
+  ): { quad: Quad; index: number } | undefined {
+    const xx = Math.floor(x / GRID_SIZE);
+    const yy = Math.floor(y / GRID_SIZE);
+    const quad = quads.find((q) => xx == q.pos.x && yy == q.pos.y);
+    if (!quad) {
+      return undefined; // or some default value
+    }
+    const cellX = x % GRID_SIZE;
+    const cellY = y % GRID_SIZE;
+    const index = cellY * GRID_SIZE + cellX;
+    return { quad, index };
+  }
 
   function getCell(x: number, y: number): number {
     const xx = Math.floor(x / GRID_SIZE);
-    const yy =  Math.floor(y / GRID_SIZE);
-    const quad  = quads.find((q) => xx == q.pos.x && yy == q.pos.y); 
+    const yy = Math.floor(y / GRID_SIZE);
+    const quad = quads.find((q) => xx == q.pos.x && yy == q.pos.y);
     if (!quad) {
       return 0; // or some default value
     }
@@ -139,7 +162,6 @@
     const cellY = y % GRID_SIZE;
     return quad.cells[cellY * GRID_SIZE + cellX];
   }
-
 
   function setGamePosition(x: number, y: number) {
     topLeftPosition.set(Math.max(0, x), Math.max(0, y));
@@ -151,12 +173,7 @@
     const y = Math.floor(view.y / GRID_CELL_PX);
     const width = Math.floor((view.x + view.width) / GRID_CELL_PX) - x + 1;
     const height = Math.floor((view.y + view.height) / GRID_CELL_PX) - y + 1;
-    return new Rectangle(
-      x,
-      y,
-      width,
-      height,
-    );
+    return new Rectangle(x, y, width, height);
   }
 
   function getViewRectQuad(rect: Rectangle): Rectangle {
@@ -199,7 +216,6 @@
       let offset = 0;
       const msgid = view.getUint8(offset); // Read the message ID
       offset += 1;
-      console.log("Received message ID:", msgid);
       switch (msgid) {
         case MessageID.ready: {
           const readyPkt = netParseReady(view, offset);
@@ -210,22 +226,26 @@
         case MessageID.sync_input_cell: {
           const cell = netParseCell(view, offset);
           const quadX = Math.floor(cell.x / GRID_SIZE);
-          const quadY =  Math.floor(cell.y / GRID_SIZE);
-          const quad  = quads.find((q) => quadX == q.pos.x && quadY == q.pos.y);
-          if(quad) {
+          const quadY = Math.floor(cell.y / GRID_SIZE);
+          const quad = quads.find((q) => quadX == q.pos.x && quadY == q.pos.y);
+          if (quad) {
             const cellX = cell.x % GRID_SIZE;
             const cellY = cell.y % GRID_SIZE;
             const index = cellY * GRID_SIZE + cellX;
             quad.cells[index] = cell.value;
-            quad.update()
+            quad.update();
           }
           break;
         }
         case MessageID.sync_block: {
           const syncBlock = netParseSyncChunk(view, offset);
-          const q = new Quad(new Point(syncBlock.x, syncBlock.y), syncBlock.clues, syncBlock.block)
+          const q = new Quad(
+            new Point(syncBlock.x, syncBlock.y),
+            syncBlock.clues,
+            syncBlock.block,
+          );
           quads.push(q);
-          mainStage.addChild(q.container)
+          mainStage.addChild(q.container);
           refreshQuads.trigger();
           break;
         }
@@ -245,15 +265,26 @@
     app.stage.addChild(mainStage);
     mainStage.addChild(backGraphics);
 
-    document.addEventListener('keydown', (event) => {
+    document.addEventListener("keydown", (event) => {
       const value = charToValue(event.key);
-      if(value !== undefined && selection.terminated === false) {
+      if (value !== undefined && selection.terminated === false) {
         if (selection.center) {
-          switch(selection.dir) {
+          const rec = getViewRectCells();
+          rec.width -= 1;
+          rec.height -= 1;
+          if (rec.contains(selection.center.x, selection.center.y) === false)
+            return; // do not allow to set value outside of view
+
+          switch (selectionDir) {
             case Direction.Horizontal: {
               const cell = getCell(selection.center.x + 1, selection.center.y);
-              netSendCell(socket!, selection.center.x, selection.center.y, value);
-              if(cellToValue(cell) === Value.black) {
+              netSendCell(
+                socket!,
+                selection.center.x,
+                selection.center.y,
+                value,
+              );
+              if (cellToValue(cell) === Value.black) {
                 selection.terminated = true;
                 return; // do not allow to set value on black cell
               }
@@ -262,8 +293,13 @@
             }
             case Direction.Vertical: {
               const cell = getCell(selection.center.x, selection.center.y + 1);
-              netSendCell(socket!, selection.center.x, selection.center.y, value);
-              if(cellToValue(cell) === Value.black) {
+              netSendCell(
+                socket!,
+                selection.center.x,
+                selection.center.y,
+                value,
+              );
+              if (cellToValue(cell) === Value.black) {
                 selection.terminated = true;
                 return; // do not allow to set value on black cell
               }
@@ -273,9 +309,7 @@
           }
         }
       }
-
     });
-
 
     // dragging the board
     {
@@ -313,8 +347,8 @@
                 center.x == selection.center.x &&
                 center.y == selection.center.y
               ) {
-                selection.dir =
-                  selection.dir === Direction.Horizontal
+                selectionDir =
+                  selectionDir === Direction.Horizontal
                     ? Direction.Vertical
                     : Direction.Horizontal;
               } else {
@@ -340,95 +374,133 @@
 
     app.ticker.add((_) => {
       const size = viewSize();
-      mainStage.pivot.set(Math.max(0, topLeftPosition.x + stageDragPosition.x), Math.max(0, topLeftPosition.y + stageDragPosition.y));
+      mainStage.pivot.set(
+        Math.max(0, topLeftPosition.x + stageDragPosition.x),
+        Math.max(0, topLeftPosition.y + stageDragPosition.y),
+      );
       graphicContainer.clear();
       graphicDrawRect(
         graphicContainer,
         new Rectangle(0, 0, size.x, size.y),
       ).fill(0xffffff);
       backGraphics.clear();
-      {
-        const center = selection.center;
-        if (center) {
-          switch (selection.dir) {
-            case Direction.Horizontal: {
-              let x0 = center.x;
-              let x1 = center.x;
-              const viewRect = getViewRectCells();
-              while (x1 <= viewRect.right) {
-                const cell = getCell(x1, center.y);
-                if (cellToValue(cell) === Value.black) {
-                  break;
-                }
-                x1 += 1;
-              }
-              while (x0 > viewRect.left) {
-                const cell = getCell(x0, center.y);
-                if (cellToValue(cell) === Value.black) {
-                  break;
-                }
-                x0 -= 1;
-              }
-              backGraphics
-                .rect(
-                  x0 * GRID_CELL_PX,
-                  center.y * GRID_CELL_PX,
-                  (x1 - x0) * GRID_CELL_PX,
-                  1 * GRID_CELL_PX,
-                )
-                .fill(0xa7d8ff);
-              break;
-            }
-            case Direction.Vertical: {
-              let y0 = center.y;
-              let y1 = center.y;
-              const viewRect = getViewRectCells();
-              while (y1 <= viewRect.bottom) {
-                const cell = getCell(center.x, y1);
-                if (cellToValue(cell) === Value.black) {
-                  break;
-                }
-                y1 += 1;
-              }
-              while (y0 > viewRect.top) {
-                const cell = getCell(center.x, y0);
-                if (cellToValue(cell) === Value.black) {
-                  break;
-                }
-                y0 -= 1;
-              }
-              backGraphics
-                .rect(
-                  center.x * GRID_CELL_PX,
-                  y0 * GRID_CELL_PX,
-                  GRID_CELL_PX,
-                  (y1 - y0) * GRID_CELL_PX,
-                )
-                .fill(0xa7d8ff);
-              break;
-            }
-          }
+      const center = selection.center;
+      hightligthSlots = [];
+      if (center) {
+        let x0 = center.x;
+        let x1 = center.x;
+        let y0 = center.y;
+        let y1 = center.y;
 
-          backGraphics
-            .rect(
-              center.x * GRID_CELL_PX,
-              center.y * GRID_CELL_PX,
-              GRID_CELL_PX,
-              GRID_CELL_PX,
-            )
-            .fill(0xffda00);
+        highlightSlotHorizontal = [];
+        highlightSlotsVertical = [];
+        const viewRect = getViewRectCells();
+        while (x1 <= viewRect.right) {
+          const cell = getChunkAndIndex(x1, center.y);
+          if (
+            cell === undefined ||
+            cellToValue(cell.quad.cells[cell.index]) === Value.black
+          ) {
+            break;
+          }
+          const clueIdx = cell.quad.clueNumbers[cell.index];
+          if (clueIdx >= 0 && clueSlots[clueIdx] && clueSlots[clueIdx].hor)
+            highlightSlotHorizontal.push(clueIdx);
+          if (x1 === boardSize.x - 1) break;
+          x1 += 1;
         }
+        while (x0 >= viewRect.left) {
+          const cell = getChunkAndIndex(x0, center.y);
+          if (
+            cell === undefined ||
+            cellToValue(cell.quad.cells[cell.index]) === Value.black
+          ) {
+            break;
+          }
+          const clueIdx = cell.quad.clueNumbers[cell.index];
+          if (clueIdx >= 0 && clueSlots[clueIdx] && clueSlots[clueIdx].hor)
+            highlightSlotHorizontal.push(clueIdx);
+          if (x0 === 0) break;
+          x0 -= 1;
+        }
+        while (y1 <= viewRect.bottom) {
+          const cell = getChunkAndIndex(center.x, y1);
+          if (
+            cell === undefined ||
+            cellToValue(cell.quad.cells[cell.index]) === Value.black
+          )
+            break;
+          const clueIdx = cell.quad.clueNumbers[cell.index];
+          if (clueIdx >= 0 && clueSlots[clueIdx] && clueSlots[clueIdx].ver)
+            highlightSlotsVertical.push(clueIdx);
+          if (y1 === boardSize.y - 1) break;
+          y1 += 1;
+        }
+        while (y0 >= viewRect.top) {
+          const cell = getChunkAndIndex(center.x, y0);
+          if (
+            cell === undefined ||
+            cellToValue(cell.quad.cells[cell.index]) === Value.black
+          )
+            break;
+          const clueIdx = cell.quad.clueNumbers[cell.index];
+          if (clueIdx >= 0 && clueSlots[clueIdx] && clueSlots[clueIdx].ver)
+            highlightSlotsVertical.push(clueIdx);
+          if (y0 === 0) break;
+          y0 -= 1;
+        }
+        switch (selectionDir) {
+          case Direction.Horizontal: {
+            backGraphics
+              .rect(
+                x0 * GRID_CELL_PX,
+                center.y * GRID_CELL_PX,
+                (x1 - x0) * GRID_CELL_PX,
+                1 * GRID_CELL_PX,
+              )
+              .fill(0xa7d8ff);
+            break;
+          }
+          case Direction.Vertical: {
+            backGraphics
+              .rect(
+                center.x * GRID_CELL_PX,
+                y0 * GRID_CELL_PX,
+                GRID_CELL_PX,
+                (y1 - y0) * GRID_CELL_PX,
+              )
+              .fill(0xa7d8ff);
+            break;
+          }
+        }
+        backGraphics
+          .rect(
+            center.x * GRID_CELL_PX,
+            center.y * GRID_CELL_PX,
+            GRID_CELL_PX,
+            GRID_CELL_PX,
+          )
+          .fill(0xffda00);
       }
+
       // render grid
       {
         const startX = mainStage.pivot.x - (mainStage.pivot.x % GRID_CELL_PX);
         const startY = mainStage.pivot.y - (mainStage.pivot.y % GRID_CELL_PX);
-        for (let x = 0 - GRID_CELL_PX; x < size.x + GRID_CELL_PX; x += GRID_CELL_PX) {
+        for (
+          let x = 0 - GRID_CELL_PX;
+          x < size.x + GRID_CELL_PX;
+          x += GRID_CELL_PX
+        ) {
           backGraphics
             .moveTo(x + startX, startY - GRID_CELL_PX)
             .lineTo(x + startX, size.y + startY + GRID_CELL_PX);
         }
-        for (let y = -GRID_CELL_PX; y < size.y + GRID_CELL_PX; y += GRID_CELL_PX) {
+        for (
+          let y = -GRID_CELL_PX;
+          y < size.y + GRID_CELL_PX;
+          y += GRID_CELL_PX
+        ) {
           backGraphics
             .moveTo(startX - GRID_CELL_PX, y + startY)
             .lineTo(size.x + startX + GRID_CELL_PX, y + startY);
@@ -437,30 +509,74 @@
       }
     });
   });
+
+  let selectionText = $derived.by(() => {
+    if(selectionDir === Direction.Horizontal && highlightSlotHorizontal.length > 0) {
+      const slot = clueSlots[highlightSlotHorizontal[highlightSlotHorizontal.length - 1]]
+      if(slot && slot.hor) {
+        return slot.hor.text;
+      }
+    } else if(selectionDir === Direction.Vertical) {
+      const slot = clueSlots[highlightSlotsVertical[highlightSlotsVertical.length - 1]]
+      if(slot && slot.ver) {
+        return slot.ver.text;
+      }
+    }
+    return "";
+  });
 </script>
 
-<div class="container mx-auto flex">
-  <div class="flex-4 aspect-square overflow-hidden" bind:this={frame}></div>
+<div class="container mx-auto flex sm:w-full">
+  <div class="flex-4 flex flex-col">
+    <div class="bg-sky-300 items-center justify-center text-black text-center mb-3 p-4">
+      {#if selectionText !== ""}
+        {selectionText}
+      {:else}
+        ???
+      {/if}
+    </div>
+    <div class="aspect-square overflow-hidden border-black border-2" bind:this={frame}></div>
+  </div>
   <div class="flex-3 text-black">
     <div class="flex">
-      <div class="flex-1">
-        <h1 class="text-2xl font-bold">Across</h1>
+      <div class="flex-1 m-3">
+        <h1 class="text-2xl font-bold border-b-1 border-gray-200">Across</h1>
         <div class="overflow-y-auto h-200">
           {#each clueSlots as clue, i}
             {#if clue && clue.hor}
-              <div class="py-1 px-2 hover:bg-gray-100 cursor-pointer">
+              {@const verticalSelection = highlightSlotHorizontal.findIndex((k) => i === k) >= 0}
+              <div
+                class={{
+                  "border-l-10 border-transparent pl-3 py-1 cursor-pointer my-2 select-none": true,
+                  "!border-sky-300": selectionDir === Direction.Vertical && verticalSelection,
+                  "bg-sky-300": selectionDir === Direction.Horizontal && verticalSelection,
+                }}
+                on:click={() => {
+                   (selection.center = clue.pos) && (selectionDir = Direction.Horizontal);
+                }}
+              >
                 {i + 1}. {clue.hor.text}
               </div>
             {/if}
           {/each}
         </div>
       </div>
-      <div class="flex-1">
-        <h2 class="text-2xl font-bold">Down</h2>
+      <div class="flex-1 m-3">
+        <h2 class="text-2xl font-bold border-b-1 border-gray-200">Down</h2>
         <div class="overflow-y-auto h-200">
           {#each clueSlots as clue, i}
             {#if clue && clue.ver}
-              <div class="py-1 px-2 hover:bg-gray-100 cursor-pointer">
+              {@const horizontalSelection = highlightSlotsVertical.findIndex((k) => i === k)}
+              <div
+                class={{
+                  "border-l-10 border-transparent pl-3 py-1 cursor-pointer my-2 select-none" : true,
+                  "!border-sky-300": selectionDir === Direction.Horizontal && horizontalSelection >= 0,
+                  "bg-sky-300": selectionDir === Direction.Vertical && horizontalSelection >= 0,
+                }}
+                on:click={() => {
+                   (selection.center = clue.pos) && (selectionDir = Direction.Vertical);
+                }}
+              >
                 {i + 1}. {clue.ver.text}
               </div>
             {/if}
