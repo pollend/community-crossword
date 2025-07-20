@@ -19,12 +19,10 @@ export interface NetSyncBlock {
   x: number;
   y: number;
   block: number[];
-  clues: Clue[]
+  clues: Clue[];
 }
 
 export interface NetReady {
   board_width: number;
   board_height: number;
 }
-
-

@@ -11,6 +11,7 @@
   import {
     cellToValue,
     charToValue,
+    isBlocked,
     MessageID,
     netParseCell,
     netParseReady,
@@ -151,21 +152,18 @@
     return { quad, index };
   }
 
-  function getCell(x: number, y: number): number {
+  function getCell(x: number, y: number): number | undefined {
     const xx = Math.floor(x / GRID_SIZE);
     const yy = Math.floor(y / GRID_SIZE);
     const quad = quads.find((q) => xx == q.pos.x && yy == q.pos.y);
     if (!quad) {
-      return 0; // or some default value
+      return undefined;
     }
     const cellX = x % GRID_SIZE;
     const cellY = y % GRID_SIZE;
     return quad.cells[cellY * GRID_SIZE + cellX];
   }
 
-  function setGamePosition(x: number, y: number) {
-    topLeftPosition.set(Math.max(0, x), Math.max(0, y));
-  }
 
   function getViewRectCells(): Rectangle {
     const view = getViewRect();
@@ -189,11 +187,17 @@
     return new Point(bound.width, bound.height);
   }
 
+  function setGamePosition(x: number, y: number) {
+    const size = viewSize();
+    topLeftPosition.set(
+      Math.min(Math.max(0, x), boardSize.x * GRID_CELL_PX - size.x), 
+      Math.min(Math.max(0, y), boardSize.y * GRID_CELL_PX - size.y));
+  }
   function getViewRect(): Rectangle {
     const size = viewSize();
     return new Rectangle(
-      Math.max(topLeftPosition.x + stageDragPosition.x, 0),
-      Math.max(topLeftPosition.y + stageDragPosition.y, 0),
+      Math.min(Math.max(topLeftPosition.x + stageDragPosition.x, 0), boardSize.x * GRID_CELL_PX - size.x),
+      Math.min(Math.max(topLeftPosition.y + stageDragPosition.y, 0), boardSize.y * GRID_CELL_PX - size.y),
       size.x,
       size.y,
     );
@@ -277,34 +281,55 @@
 
           switch (selectionDir) {
             case Direction.Horizontal: {
-              const cell = getCell(selection.center.x + 1, selection.center.y);
               netSendCell(
                 socket!,
                 selection.center.x,
                 selection.center.y,
                 value,
               );
-              if (cellToValue(cell) === Value.black) {
-                selection.terminated = true;
-                return; // do not allow to set value on black cell
+              while(true) {
+                selection.center.x += 1;
+                const cell = getCell(selection.center.x, selection.center.y);
+                if(cell === undefined) {
+                  selection.terminated = true;
+                  return; // do not allow to set value outside of view
+                }
+                if (cellToValue(cell) === Value.black) {
+                  selection.center.x -= 1;
+                  selection.terminated = true;
+                  return; // do not allow to set value on black cell
+                }
+                if(isBlocked(cell)) {
+                  continue; // do not allow to set value on black cell
+                }
+                break;
               }
-              selection.center.x += 1;
               break;
             }
             case Direction.Vertical: {
-              const cell = getCell(selection.center.x, selection.center.y + 1);
               netSendCell(
                 socket!,
                 selection.center.x,
                 selection.center.y,
                 value,
               );
-              if (cellToValue(cell) === Value.black) {
-                selection.terminated = true;
-                return; // do not allow to set value on black cell
+              while(true) {
+                selection.center.y += 1;
+                const cell = getCell(selection.center.x, selection.center.y);
+                if(cell === undefined) {
+                  selection.terminated = true;
+                  return; // do not allow to set value outside of view
+                }
+                if (cellToValue(cell) === Value.black) {
+                  selection.center.y -= 1;
+                  selection.terminated = true;
+                  return; // do not allow to set value on black cell
+                }
+                if(isBlocked(cell)) {
+                  continue; // do not allow to set value on black cell
+                }
+                break;
               }
-              selection.center.y += 1;
-              break;
             }
           }
         }
@@ -374,10 +399,8 @@
 
     app.ticker.add((_) => {
       const size = viewSize();
-      mainStage.pivot.set(
-        Math.max(0, topLeftPosition.x + stageDragPosition.x),
-        Math.max(0, topLeftPosition.y + stageDragPosition.y),
-      );
+      const rect = getViewRect();
+      mainStage.pivot.set(rect.x, rect.y);
       graphicContainer.clear();
       graphicDrawRect(
         graphicContainer,

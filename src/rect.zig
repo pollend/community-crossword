@@ -21,6 +21,19 @@ pub fn create(x: u32, y: u32, width: u32, height: u32) Rect {
     return .{ .x = x, .y = y, .width = width, .height = height };
 }
 
+pub fn enclosePoint(self: Rect, point: @Vector(2, u32)) Rect {
+    const x = @min(self.x, point[0]);
+    const y = @min(self.y, point[1]);
+    const width = @max(self.x + self.width, point[0] + 1) - x;
+    const height = @max(self.y + self.height, point[1] + 1) - y;
+    return . {
+        .x = x,
+        .y = y,
+        .width = width,
+        .height = height
+    };
+} 
+
 pub fn contains_point(self: Rect, point: @Vector(2, u32)) bool {
     return point[0] >= self.x and point[0] < self.x + self.width and
         point[1] >= self.y and point[1] < self.y + self.height;

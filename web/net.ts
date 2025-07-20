@@ -5,8 +5,8 @@ import { GRID_SIZE } from "./constants";
 const lastSyncedView = new Rectangle(0, 0, 0, 0);
 
 export enum MessageID {
-  ready = 0, 
-  set_view = 1, 
+  ready = 0,
+  set_view = 1,
   sync_block = 2,
   sync_input_cell = 3,
 }
@@ -47,73 +47,155 @@ export function isBlocked(value: number): boolean {
   return value & 0x80 ? true : false;
 }
 
-export function cellToValue(value: number) : Value{
-  return value & 0x7F;
+export function cellToValue(value: number): Value {
+  return value & 0x7f;
 }
 export function valueToChar(value: Value): string {
   switch (value) {
-    case Value.dash: return '-';
-    case Value.empty: return ' ';
-    case Value.a: return 'a';
-    case Value.b: return 'b';
-    case Value.c: return 'c';
-    case Value.d: return 'd';
-    case Value.e: return 'e';
-    case Value.f: return 'f';
-    case Value.g: return 'g';
-    case Value.h: return 'h';
-    case Value.i: return 'i';
-    case Value.j: return 'j';
-    case Value.k: return 'k';
-    case Value.l: return 'l';
-    case Value.m: return 'm';
-    case Value.n: return 'n';
-    case Value.o: return 'o';
-    case Value.p: return 'p';
-    case Value.q: return 'q';
-    case Value.r: return 'r';
-    case Value.s: return 's';
-    case Value.t: return 't';
-    case Value.u: return 'u';
-    case Value.v: return 'v';
-    case Value.w: return 'w';
-    case Value.x: return 'x';
-    case Value.y: return 'y';
-    case Value.z: return 'z';
+    case Value.dash:
+      return "-";
+    case Value.empty:
+      return " ";
+    case Value.a:
+      return "A";
+    case Value.b:
+      return "B";
+    case Value.c:
+      return "C";
+    case Value.d:
+      return "D";
+    case Value.e:
+      return "E";
+    case Value.f:
+      return "F";
+    case Value.g:
+      return "G";
+    case Value.h:
+      return "H";
+    case Value.i:
+      return "I";
+    case Value.j:
+      return "J";
+    case Value.k:
+      return "K";
+    case Value.l:
+      return "L";
+    case Value.m:
+      return "M";
+    case Value.n:
+      return "N";
+    case Value.o:
+      return "O";
+    case Value.p:
+      return "P";
+    case Value.q:
+      return "Q";
+    case Value.r:
+      return "R";
+    case Value.s:
+      return "S";
+    case Value.t:
+      return "T";
+    case Value.u:
+      return "U";
+    case Value.v:
+      return "V";
+    case Value.w:
+      return "W";
+    case Value.x:
+      return "X";
+    case Value.y:
+      return "Y";
+    case Value.z:
+      return "Z";
   }
   throw new Error(`Unknown value ${value}`);
 }
 
 export function charToValue(c: string): Value | undefined {
   switch (c) {
-   case '-': return Value.dash;
-   case ' ': return Value.empty;
-   case 'A': case 'a': return Value.a;
-   case 'B': case 'b': return Value.b;
-   case 'C': case 'c': return Value.c;
-   case 'D': case 'd': return Value.d;
-   case 'E': case 'e': return Value.e;
-   case 'F': case 'f': return Value.f;
-   case 'G': case 'g': return Value.g;
-   case 'H': case 'h': return Value.h;
-   case 'I': case 'i': return Value.i;
-   case 'J': case 'j': return Value.j;
-   case 'K': case 'k': return Value.k;
-   case 'L': case 'l': return Value.l;
-   case 'M': case 'm': return Value.m;
-   case 'N': case 'n': return Value.n;
-   case 'O': case 'o': return Value.o;
-   case 'P': case 'p': return Value.p;
-   case 'Q': case 'q': return Value.q;
-   case 'R': case 'r': return Value.r;
-   case 'S': case 's': return Value.s;
-   case 'T': case 't': return Value.t;
-   case 'U': case 'u': return Value.u;
-   case 'V': case 'v': return Value.v;
-   case 'W': case 'w': return Value.w;
-   case 'X': case 'x': return Value.x;
-   case 'Y': case 'y': return Value.y;
-   case 'Z': case 'z': return Value.z;
+    case "-":
+      return Value.dash;
+    case " ":
+      return Value.empty;
+    case "A":
+    case "a":
+      return Value.a;
+    case "B":
+    case "b":
+      return Value.b;
+    case "C":
+    case "c":
+      return Value.c;
+    case "D":
+    case "d":
+      return Value.d;
+    case "E":
+    case "e":
+      return Value.e;
+    case "F":
+    case "f":
+      return Value.f;
+    case "G":
+    case "g":
+      return Value.g;
+    case "H":
+    case "h":
+      return Value.h;
+    case "I":
+    case "i":
+      return Value.i;
+    case "J":
+    case "j":
+      return Value.j;
+    case "K":
+    case "k":
+      return Value.k;
+    case "L":
+    case "l":
+      return Value.l;
+    case "M":
+    case "m":
+      return Value.m;
+    case "N":
+    case "n":
+      return Value.n;
+    case "O":
+    case "o":
+      return Value.o;
+    case "P":
+    case "p":
+      return Value.p;
+    case "Q":
+    case "q":
+      return Value.q;
+    case "R":
+    case "r":
+      return Value.r;
+    case "S":
+    case "s":
+      return Value.s;
+    case "T":
+    case "t":
+      return Value.t;
+    case "U":
+    case "u":
+      return Value.u;
+    case "V":
+    case "v":
+      return Value.v;
+    case "W":
+    case "w":
+      return Value.w;
+    case "X":
+    case "x":
+      return Value.x;
+    case "Y":
+    case "y":
+      return Value.y;
+    case "Z":
+    case "z":
+      return Value.z;
   }
   return undefined;
 }
@@ -129,10 +211,10 @@ export function netParseCell(view: DataView, offset: number) {
     x: x,
     y: y,
     value: cell,
-  }
+  };
 }
 
-export function netParseReady(view: DataView, offset: number){
+export function netParseReady(view: DataView, offset: number) {
   const width = view.getUint32(offset, true);
   offset += 4;
   const height = view.getUint32(offset, true);
@@ -140,7 +222,7 @@ export function netParseReady(view: DataView, offset: number){
   return {
     board_width: width,
     board_height: height,
-  }
+  };
 }
 
 export function netParseSyncChunk(
@@ -157,7 +239,7 @@ export function netParseSyncChunk(
     offset += 1;
   }
   const numClues = view.getUint16(offset, true);
-  let clues: Clue[] = [];
+  const clues: Clue[] = [];
   offset += 2;
   for (let i = 0; i < numClues; i++) {
     const x = view.getUint8(offset);
@@ -168,8 +250,8 @@ export function netParseSyncChunk(
     offset += 1;
     const clueLength = view.getUint16(offset, true);
     offset += 2;
-    let tex: string = ""
-    for(let j = 0; j < clueLength; j++) {
+    let tex: string = "";
+    for (let j = 0; j < clueLength; j++) {
       const ch = view.getUint8(offset);
       offset += 1;
       tex += String.fromCharCode(ch);
@@ -179,22 +261,17 @@ export function netParseSyncChunk(
       y: y,
       dir: dir,
       text: tex,
-    })
+    });
   }
   return { x, y, block, clues };
 }
 
-export function netSendCell(
-  ws: WebSocket,
-  x: number,
-  y: number,
-  value: Value,
-) {
+export function netSendCell(ws: WebSocket, x: number, y: number, value: Value) {
   // 1 byte for ID, 4 bytes for x, 4 bytes for y, 1 byte for value
   const buffer = new ArrayBuffer(1 + 4 + 4 + 1);
   let offset = 0;
   const view = new DataView(buffer);
-  view.setUint8(offset, MessageID.sync_input_cell );
+  view.setUint8(offset, MessageID.sync_input_cell);
   offset += 1;
   view.setUint32(offset, x, true);
   offset += 4;
@@ -203,7 +280,6 @@ export function netSendCell(
   view.setUint8(offset, value);
   ws.send(buffer);
 }
-
 
 export function netSendViewRect(
   ws: WebSocket,
@@ -220,7 +296,6 @@ export function netSendViewRect(
   ) {
     return;
   }
-
   lastSyncedView.set(x, y, width, height);
 
   // 1 byte for ID, 4 bytes each for x, y, width, height

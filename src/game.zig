@@ -64,7 +64,7 @@ pub const Cell = packed struct {
     pub fn encode(self: *const Cell) u8 {
         var value: u8 = @intFromEnum(self.value);
         if (self.lock == 1) {
-            value |= 1 << 5; // set the lock bit at position 5
+            value |= 1 << 7; 
         }
         return value;
     }
@@ -127,6 +127,18 @@ pub const Clue = struct {
         };
     }
 
+    pub fn to_rect(self: *Clue) rect.Rect {
+        const width = switch (self.dir) {
+            .Across => @as(u32, @intCast(self.word.len)),
+            .Down => 1,
+        };
+        const height = switch (self.dir) {
+            .Across => 1,
+            .Down => @as(u32, @intCast(self.word.len)),
+        };
+        return rect.create(self.pos[0], self.pos[1], width, height);
+    }
+
     pub fn deinit(self: *Clue) void {
         self.allocator.free(self.word);
         self.allocator.free(self.clue);
@@ -144,15 +156,28 @@ pub const Quad = struct {
     lock: std.Thread.RwLock,
     overlapping_clues: std.ArrayList(*Clue), // clues that overlap with this quad
     clues: std.ArrayList(*Clue), // clues that are starting in this quad
-  
+
+    pub fn get_crossing_clues(self: *Quad, pos: @Vector(2, u32), collection: []*Clue, len: *usize) void {
+        for (self.overlapping_clues.items) |cl| {
+            if (len.* >= collection.len) {
+                return;
+            }
+            if (cl.to_rect().contains_point(pos)) {
+                collection[len.*] = cl;
+                len.* += 1;
+            }
+        }
+    }
+
     pub fn to_global(self: *Quad, pos: @Vector(2, u32)) @Vector(2, u32) {
         assert(pos[0] < GRID_SIZE and pos[1] < GRID_SIZE);
         return @Vector(2, u32){ self.x * GRID_SIZE + pos[0], self.y * GRID_SIZE + pos[1] };
     }
+
     pub fn to_local(self: *Quad, pos: @Vector(2, u32)) @Vector(2, u32) {
         assert(pos[0] >= self.x * GRID_SIZE and pos[1] >= self.y * GRID_SIZE);
         assert(pos[0] < (self.x + 1) * GRID_SIZE and pos[1] < (self.y + 1) * GRID_SIZE);
-        return @Vector(2, u32){ pos[0] % GRID_SIZE, pos[1]  % GRID_SIZE };
+        return @Vector(2, u32){ pos[0] % GRID_SIZE, pos[1] % GRID_SIZE };
     }
 
     pub fn get_cell(self: *Quad, pos: @Vector(2, u32)) *Cell {
@@ -161,21 +186,6 @@ pub const Quad = struct {
         return &self.input[index];
     }
 
-    pub fn broadcast_cell(self: *Quad, pos: @Vector(2, u32)) void {
-        const cell = self.get_cell(pos);
-        const global_pos = self.to_global(pos);
-        self.client_lock.lockShared();
-        defer self.client_lock.unlockShared();
-        self.lock.lockShared();
-        defer self.lock.unlockShared();
-
-        for(self.clients.items) |c| {
-            client.msg_sync_cell(c, global_pos, cell.*) catch |err| {
-                std.log.err("Failed to sync cell to client: {any}", .{err});
-            };
-        }
-    }
-    
     pub fn init(allocator: std.mem.Allocator, x: u32, y: u32) !Quad {
         return .{
             .x = x,
@@ -205,9 +215,82 @@ pub const Quad = struct {
     }
 };
 
+pub fn BoardRectIterator(Context: type, comptime enter: fn (*Context, quad: *Quad) void, comptime exit: fn (*Context, quad: *Quad) void) type {
+    return struct {
+        board: *Board,
+        iter: rect.RectIterator,
+        quad: ?*Quad = null,
+        context: Context,
+
+        const Self = @This();
+
+        pub fn init(c: Context, board: *Board, rc: rect.Rect) Self {
+            return .{
+                .board = board,
+                .iter = rc.iterator(),
+                .quad = null,
+                .context = c,
+            };
+        }
+
+        pub fn deinit(self: *Self) void {
+            if (self.quad) |q| {
+                exit(&self.context, q);
+            }
+        }
+        // returns cell position quad and the relative position within the quad
+        pub fn next(self: *Self) ?struct { q: *Quad, p: @Vector(2, u32) } {
+            while (self.iter.next()) |cell_pos| {
+                if (self.quad) |q| {
+                    if (q.quad_rect_global().contains_point(cell_pos)) {
+                        return .{ .q = q, .p = q.to_local(cell_pos) };
+                    } else {
+                        exit(&self.context, q);
+                        self.quad = null;
+                    }
+                }
+                if (self.board.get_quad_from_cell_pos(cell_pos)) |q| {
+                    enter(&self.context, q);
+                    self.quad = q;
+                    return .{ .q = q, .p = q.to_local(cell_pos) };
+                }
+            }
+            if (self.quad) |q| {
+                exit(&self.context, q);
+                self.quad = null;
+            }
+            return null;
+        }
+    };
+}
+
+pub const DefaultQuadDefault = game.BoardRectIterator(void, _default_board_enter, _default_board_exit);
+fn _default_board_enter(_: *void, _: *game.Quad) void {
+
+}
+fn _default_board_exit(_: *void, _: *game.Quad) void {}
+
 pub const Board = struct {
     size: @Vector(2, u32),
     quads: []Quad,
+
+    pub fn lock_quads(self: *Board, quad_rect: rect.Rect) void {
+        var iter = quad_rect.iterator();
+        while (iter.next()) |pos| {
+            if (self.get_quad(pos)) |quad| {
+                quad.lock.lock();
+            }
+        }
+    }
+
+    pub fn unlock_quads(self: *Board, quad_rect: rect.Rect) void {
+        var iter = quad_rect.iterator();
+        while (iter.next()) |pos| {
+            if (self.get_quad(pos)) |quad| {
+                quad.lock.unlock();
+            }
+        }
+    }
 
     pub fn set_value_from_cell_position(self: *Board, pos: @Vector(2, u32), value: Value) bool {
         if (get_quad_from_cell_pos(self, pos)) |quad| {
@@ -244,6 +327,14 @@ pub const Board = struct {
         return quad;
     }
 
+    pub fn get_cell_from_cell_pos(self: *Board, pos: @Vector(2, u32)) ?*Cell {
+        if (get_quad_from_cell_pos(self, pos)) |quad| {
+            const local_pos = quad.to_local(pos);
+            return quad.get_cell(local_pos);
+        }
+        return null;
+    }
+
     pub fn get_quad_from_cell_pos(self: *Board, pos: @Vector(2, u32)) ?*Quad {
         const quad_x = pos[0] / GRID_SIZE;
         const quad_y = pos[1] / GRID_SIZE;
@@ -270,6 +361,46 @@ pub const Board = struct {
                     std.log.err("Failed to append client to quad: {any}", .{err});
                     unregister_client_board(board, c, add_rect);
                 };
+            }
+        }
+    }
+
+    pub fn update_client_rect(
+        board: *game.Board,
+        c: *client.Client,
+        old_rect: rect.Rect,
+        new_rect: rect.Rect,
+    ) void {
+        {
+            var iter = old_rect.iterator();
+            while (iter.next()) |pos| {
+                if (new_rect.contains_point(pos)) 
+                    continue;
+                if (game.state.board.get_quad(pos)) |quad| {
+                    quad.client_lock.lock();
+                    defer quad.client_lock.unlock();
+                    for (quad.clients.items, 0..) |cl, index| {
+                        if (cl == c) {
+                            _ = quad.clients.swapRemove(index);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        {
+            var iter = new_rect.iterator();
+            while (iter.next()) |pos| {
+                if (old_rect.contains_point(pos)) 
+                    continue;
+                if (game.state.board.get_quad(pos)) |quad| {
+                    quad.client_lock.lock();
+                    defer quad.client_lock.unlock();
+                    quad.clients.append(c) catch |err| {
+                        std.log.err("Failed to append client to quad: {any}", .{err});
+                        unregister_client_board(board, c, new_rect);
+                    };
+                }
             }
         }
     }
@@ -352,7 +483,7 @@ pub const State = struct {
             }
             switch (clue.dir) {
                 .Across => {
-                    const quad_hit = map_to_quad(rect.create(clue.pos[0], clue.pos[1], @as(u32,@intCast(clue.word.len)), 1)); 
+                    const quad_hit = map_to_quad(rect.create(clue.pos[0], clue.pos[1], @as(u32, @intCast(clue.word.len)), 1));
                     var iter = quad_hit.iterator();
                     while (iter.next()) |pos| {
                         if (board.get_quad_from_cell_pos(pos)) |quad| {
@@ -374,7 +505,7 @@ pub const State = struct {
                     }
                 },
                 .Down => {
-                    const quad_hit = map_to_quad(rect.create(clue.pos[0], clue.pos[1], 1, @as(u32,@intCast(clue.word.len)))); 
+                    const quad_hit = map_to_quad(rect.create(clue.pos[0], clue.pos[1], 1, @as(u32, @intCast(clue.word.len))));
                     var iter = quad_hit.iterator();
                     while (iter.next()) |pos| {
                         if (board.get_quad_from_cell_pos(pos)) |quad| {
