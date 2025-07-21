@@ -42,6 +42,7 @@ RUN addgroup -g 1001 -S appuser && \
 # Copy the built binary
 COPY --from=zig-builder /app/zig-out/bin/app /usr/local/bin
 COPY --from=zig-builder /app/dist /app/dist
+COPY --from=zig-builder /app/crossword.map /app/crossword.map
 
 # Set working directory
 WORKDIR /app
@@ -53,8 +54,8 @@ RUN chown -R appuser:appuser /app
 USER appuser
 
 # Expose port (adjust based on your app)
-ENV PORT=80
-EXPOSE PORT 
+ENV PORT=8080
+EXPOSE ${PORT} 
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \

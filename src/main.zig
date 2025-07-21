@@ -130,7 +130,6 @@ fn load_board(allocator: std.mem.Allocator, path: []const u8, board_width: *u32,
 const Config = struct {
     allocator: std.mem.Allocator,
     port: u16,
-    public_folder: []const u8,
     crossword_map: []const u8,
     threads: i16,
     workers: i16,
@@ -150,20 +149,13 @@ const Config = struct {
     }
 
     fn deinit(self: *Config) void {
-        self.allocator.free(self.public_folder);
         self.allocator.free(self.crossword_map);
     }
     fn load_config_from_env(allocator: std.mem.Allocator) !Config {
-        var public_folder: []const u8 = undefined;
         var port: u16 = 3010; 
         var crossword_map: []const u8 = undefined;
         var threads: i16 = 1;
         var workers: i16 = 1;
-        if(try __get_env_var(allocator, "PUBLIC_FOLDER")) |s| {
-            public_folder = s;
-        } else {
-            public_folder = try allocator.dupe(u8,"dist");
-        }
 
         if(try __get_env_var(allocator, "PORT")) | port_str| {
             port = try __parse_env_integer(u16, port_str, "PORT");
@@ -195,7 +187,6 @@ const Config = struct {
         return .{
             .allocator = allocator,
             .port = port,
-            .public_folder = public_folder,
             .crossword_map = crossword_map,
             .threads = threads,
             .workers = workers,
@@ -229,7 +220,7 @@ pub fn main() !void {
             .on_request = on_request,
             .max_clients = null,
             .max_body_size = 1 * 1024,
-            .public_folder = config.public_folder,
+            .public_folder = "dist",
             .log = true,
         },
     );
@@ -237,7 +228,6 @@ pub fn main() !void {
     std.log.info("", .{});
     std.log.info("Server configuration:", .{});
     std.log.info("  Port: {d}", .{config.port});
-    std.log.info("  Public folder: {s}", .{config.public_folder});
     std.log.info("  Crossword map: {s}", .{config.crossword_map});
     std.log.info("  Threads: {d}, Workers: {d}", .{ config.threads, config.workers });
     std.log.info("", .{});
