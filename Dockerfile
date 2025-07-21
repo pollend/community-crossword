@@ -1,12 +1,11 @@
 # Multi-stage build for smaller final image
-FROM alpine:latest as zig-builder
+FROM debian:latest as zig-builder
 
 # Install dependencies
-RUN apk add --no-cache \
-    curl \
-    xz \
-    bash \
+RUN apt-get update
+RUN apt-get install -y \
     nodejs \
+    curl \
     npm
 
 
@@ -27,17 +26,10 @@ RUN npm install
 RUN npm run build
 
 # Build the application
-RUN zig build -Doptimize=ReleaseFast
+RUN zig build --release=safe
 
 # Final stage - minimal runtime image
-FROM alpine:latest
-
-# Install runtime dependencies if needed
-RUN apk add --no-cache ca-certificates
-
-# Create non-root user
-RUN addgroup -g 1001 -S appuser && \
-    adduser -S -D -H -u 1001 -s /sbin/nologin appuser
+FROM debian:latest
 
 # Copy the built binary
 COPY --from=zig-builder /app/zig-out/bin/app /usr/local/bin
@@ -46,12 +38,6 @@ COPY --from=zig-builder /app/crossword.map /app/crossword.map
 
 # Set working directory
 WORKDIR /app
-
-# Change ownership to non-root user
-RUN chown -R appuser:appuser /app
-
-# Switch to non-root user
-USER appuser
 
 # Expose port (adjust based on your app)
 ENV PORT=8080
