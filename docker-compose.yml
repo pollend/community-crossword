@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  # Zig application container
+  zig-app:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    ports:
+      - "3010:3010"
+    environment:
+      - PORT=3010
+    volumes:
+      - ./src:/app/src:ro
+      - ./build.zig:/app/build.zig:ro
+      - ./build.zig.zon:/app/build.zig.zon:ro
+      - ./crossword.map:/app/crossword.map:ro
+      - ./dist:/app/dist:ro
+    depends_on:
+      - web-dev
+
+  # Web development container (npm/vite)
+  web-dev:
+    image: node:18-alpine
+    working_dir: /app
+    ports:
+      - "8080:8080"  # Vite dev server
+    environment:
+      - BASE_URL='ws://localhost:3010'
+    volumes:
+      - ./web:/app/web:ro
+      - ./package.json:/app/package.json:ro
+      - ./vite.config.ts:/app/vite.config.ts:ro
+      - ./tsconfig.json:/app/tsconfig.json:ro
+      - ./svelte.config.js:/app/svelte.config.js:ro
+      - ./eslint.config.mjs:/app/eslint.config.mjs:ro
+      - ./index.html:/app/index.html:ro
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"

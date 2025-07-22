@@ -44,11 +44,12 @@ pub const Value = enum(u7) {
     z,
 };
 
+
 pub fn map_to_quad(rec: rect.Rect) rect.Rect {
     const x: u32 = rec.x / GRID_SIZE;
     const y: u32 = rec.y / GRID_SIZE;
-    const width: u32 = ((rec.x + rec.width) / GRID_SIZE) - x + 1;
-    const height: u32 = ((rec.y + rec.height) / GRID_SIZE) - y + 1;
+    const width: u32 = (std.math.divCeil(u32, rec.x + rec.width, GRID_SIZE) catch 1) - x;
+    const height: u32 = (std.math.divCeil(u32, rec.y + rec.height, GRID_SIZE) catch 1) - y ;
     return .{
         .x = x,
         .y = y,
@@ -469,7 +470,6 @@ pub const State = struct {
         for (clues.items) |*clue| {
             id += 1;
             clue.id = id; // Assign a unique ID to the clue
-            std.debug.print("clude id {any}\n", .{clue.id});
             if (board.get_quad_from_cell_pos(clue.pos)) |quad| {
                 quad.lock.lock();
                 defer quad.lock.unlock();
@@ -493,7 +493,7 @@ pub const State = struct {
                                 return err;
                             };
                         } else {
-                            std.log.warn("clue is incomplete trying to get quad: {any}", .{pos});
+                            std.log.warn("clue is incomplete trying to get quad: {any} quads: {any}", .{ pos, quad_hit });
                         }
                     }
                     for (clue.word, 0..) |_, index| {
@@ -508,7 +508,6 @@ pub const State = struct {
                     var iter = quad_hit.iterator();
                     while (iter.next()) |pos| {
                         if (board.get_quad(pos)) |quad| {
-                            std.debug.print("Appending clue {s} to quad at {any}\n", .{ clue.clue, pos });
                             quad.lock.lock();
                             defer quad.lock.unlock();
                             quad.overlapping_clues.append(clue) catch |err| {
