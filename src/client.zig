@@ -7,12 +7,7 @@ const net = @import("net.zig");
 
 pub const WebsocketHandler = WebSockets.Handler(Client);
 
-pub const MsgID = enum(u8) { 
-    ready = 0, 
-    set_view = 1, 
-    sync_block = 2, 
-    input_or_sync_cell = 3, 
-    unknown };
+pub const MsgID = enum(u8) { ready = 0, set_view = 1, sync_block = 2, input_or_sync_cell = 3, unknown };
 
 pub const Client = @This();
 
@@ -91,31 +86,6 @@ pub fn msg_ready(client: *Client) !void {
     };
 }
 
-pub fn msg_sync_block(client: *Client, quad: *game.Quad) !void {
-    var buffer = std.ArrayList(u8).init(client.allocator);
-    defer buffer.deinit();
-    var writer = buffer.writer();
-    try writer.writeByte(@intFromEnum(MsgID.sync_block));
-    try writer.writeInt(u32, quad.x, .little);
-    try writer.writeInt(u32, quad.y, .little);
-    var i: usize = 0;
-    while (i < game.GRID_LEN) : (i += 1) {
-        try writer.writeInt(u8, quad.input[i].encode(), .little);
-    }
-    try writer.writeInt(u16, @intCast(quad.clues.items.len), .little);
-    for (quad.clues.items) |clue| {
-        try writer.writeInt(u8, @intCast(clue.pos[0] - (quad.x * game.GRID_SIZE)), .little);
-        try writer.writeInt(u8, @intCast(clue.pos[1] - (quad.y * game.GRID_SIZE)), .little);
-        try writer.writeInt(u8, @intFromEnum(clue.dir), .little);
-        try writer.writeInt(u16, @intCast(clue.clue.len), .little);
-        try writer.writeAll(clue.clue);
-    }
-    WebsocketHandler.write(client.handle, buffer.items, false) catch |err| {
-        std.log.err("Failed to write message: {any}", .{err});
-        return err;
-    };
-}
-
 fn contains_simd2(a: []const @Vector(2, u32), b: @Vector(2, u32)) bool {
     for (a) |item| {
         if (std.simd.countTrues(item == b) == 2) {
@@ -177,13 +147,12 @@ fn on_message_websocket(
                     if (game.state.board.get_quad(pos)) |quad| {
                         quad.lock.lockShared();
                         defer quad.lock.unlockShared();
-                        try msg_sync_block(c, quad); // Sync the first block of the quad
+                        try net.msg_sync_block(c, quad); // Sync the first block of the quad
                     }
                 }
             },
             .input_or_sync_cell => {
                 const input = try net.msg_parse_input(reader.any());
-
                 if (game.state.board.get_quad_from_cell_pos(input.pos)) |quad| {
                     const local_pos = quad.to_local(input.pos);
                     {
@@ -195,14 +164,13 @@ fn on_message_websocket(
                         }
                         cell.value = input.input;
                     }
-                    //var dirty_region: rect.Rect = rect.empty();
                     var dirty_cells = std.ArrayList(@Vector(2, u32)).init(game.state.allocator);
                     defer dirty_cells.deinit();
                     try dirty_cells.append(input.pos);
                     {
                         var clues: [6]*game.Clue = undefined;
                         var len: usize = 0;
-                        quad.get_crossing_clues(local_pos, &clues, &len);
+                        quad.get_crossing_clues(input.pos, &clues, &len);
                         next_clue: for (clues[0..len]) |cl| {
                             const clue_rect = cl.to_rect();
                             const clue_quad_rect = game.map_to_quad(clue_rect);
@@ -225,7 +193,7 @@ fn on_message_websocket(
                                 while (clue_itr.next()) |qq| {
                                     qq.q.get_cell(qq.p).lock = 1;
                                     if (!contains_simd2(dirty_cells.items, qq.p)) {
-                                        try dirty_cells.append(qq.p);
+                                        try dirty_cells.append(qq.q.to_global(qq.p));
                                     }
                                 }
                             }

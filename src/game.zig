@@ -64,7 +64,7 @@ pub const Cell = packed struct {
     pub fn encode(self: *const Cell) u8 {
         var value: u8 = @intFromEnum(self.value);
         if (self.lock == 1) {
-            value |= 1 << 7; 
+            value |= 1 << 7;
         }
         return value;
     }
@@ -265,9 +265,7 @@ pub fn BoardRectIterator(Context: type, comptime enter: fn (*Context, quad: *Qua
 }
 
 pub const DefaultQuadDefault = game.BoardRectIterator(void, _default_board_enter, _default_board_exit);
-fn _default_board_enter(_: *void, _: *game.Quad) void {
-
-}
+fn _default_board_enter(_: *void, _: *game.Quad) void {}
 fn _default_board_exit(_: *void, _: *game.Quad) void {}
 
 pub const Board = struct {
@@ -374,7 +372,7 @@ pub const Board = struct {
         {
             var iter = old_rect.iterator();
             while (iter.next()) |pos| {
-                if (new_rect.contains_point(pos)) 
+                if (new_rect.contains_point(pos))
                     continue;
                 if (game.state.board.get_quad(pos)) |quad| {
                     quad.client_lock.lock();
@@ -391,7 +389,7 @@ pub const Board = struct {
         {
             var iter = new_rect.iterator();
             while (iter.next()) |pos| {
-                if (old_rect.contains_point(pos)) 
+                if (old_rect.contains_point(pos))
                     continue;
                 if (game.state.board.get_quad(pos)) |quad| {
                     quad.client_lock.lock();
@@ -471,6 +469,7 @@ pub const State = struct {
         for (clues.items) |*clue| {
             id += 1;
             clue.id = id; // Assign a unique ID to the clue
+            std.debug.print("clude id {any}\n", .{clue.id});
             if (board.get_quad_from_cell_pos(clue.pos)) |quad| {
                 quad.lock.lock();
                 defer quad.lock.unlock();
@@ -486,7 +485,7 @@ pub const State = struct {
                     const quad_hit = map_to_quad(rect.create(clue.pos[0], clue.pos[1], @as(u32, @intCast(clue.word.len)), 1));
                     var iter = quad_hit.iterator();
                     while (iter.next()) |pos| {
-                        if (board.get_quad_from_cell_pos(pos)) |quad| {
+                        if (board.get_quad(pos)) |quad| {
                             quad.lock.lock();
                             defer quad.lock.unlock();
                             quad.overlapping_clues.append(clue) catch |err| {
@@ -508,7 +507,8 @@ pub const State = struct {
                     const quad_hit = map_to_quad(rect.create(clue.pos[0], clue.pos[1], 1, @as(u32, @intCast(clue.word.len))));
                     var iter = quad_hit.iterator();
                     while (iter.next()) |pos| {
-                        if (board.get_quad_from_cell_pos(pos)) |quad| {
+                        if (board.get_quad(pos)) |quad| {
+                            std.debug.print("Appending clue {s} to quad at {any}\n", .{ clue.clue, pos });
                             quad.lock.lock();
                             defer quad.lock.unlock();
                             quad.overlapping_clues.append(clue) catch |err| {

@@ -211,7 +211,7 @@
     await app.init({ background: "#FFFFFF", resizeTo: frame });
     frame!.appendChild(app.canvas);
 
-    socket = new WebSocket("ws");
+    socket = new WebSocket(`${window.BASE_URL}/ws`);
     socket.binaryType = "arraybuffer";
 
     // prepare network ---------------------------------

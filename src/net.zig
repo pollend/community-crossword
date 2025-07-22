@@ -21,6 +21,31 @@ pub fn msg_sync_cell(c: *client.Client, pos: @Vector(2, u32), value: game.Cell) 
     };
 }
 
+pub fn msg_sync_block(c: *client.Client, quad: *game.Quad) !void {
+    var buffer = std.ArrayList(u8).init(c.allocator);
+    defer buffer.deinit();
+    var writer = buffer.writer();
+    try writer.writeByte(@intFromEnum(client.MsgID.sync_block));
+    try writer.writeInt(u32, quad.x, .little);
+    try writer.writeInt(u32, quad.y, .little);
+    var i: usize = 0;
+    while (i < game.GRID_LEN) : (i += 1) {
+        try writer.writeInt(u8, quad.input[i].encode(), .little);
+    }
+    try writer.writeInt(u16, @intCast(quad.clues.items.len), .little);
+    for (quad.clues.items) |clue| {
+        try writer.writeInt(u8, @intCast(clue.pos[0] - (quad.x * game.GRID_SIZE)), .little);
+        try writer.writeInt(u8, @intCast(clue.pos[1] - (quad.y * game.GRID_SIZE)), .little);
+        try writer.writeInt(u8, @intFromEnum(clue.dir), .little);
+        try writer.writeInt(u16, @intCast(clue.clue.len), .little);
+        try writer.writeAll(clue.clue);
+    }
+    client.WebsocketHandler.write(c.handle, buffer.items, false) catch |err| {
+        std.log.err("Failed to write message: {any}", .{err});
+        return err;
+    };
+}
+
 pub fn msg_parse_input(reader: std.io.AnyReader) !MsgInput {
     const x = try reader.readInt(u32, .little);
     const y = try reader.readInt(u32, .little);
