@@ -53,6 +53,8 @@ pub fn build(b: *std.Build) void {
     const ziglangSet = b.dependency("ziglangSet", .{});
     exe_mod.addImport("ziglangSet", ziglangSet.module("ziglangSet"));
 
+    const zig_csv = b.dependency("zig_csv", .{});
+    exe_mod.addImport("csv", zig_csv.module("csv"));
 
     // Now, we will create a static library based on the module we created above.
     // This creates a `std.Build.Step.Compile`, which is the build step responsible

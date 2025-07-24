@@ -1,6 +1,6 @@
 const std = @import("std");
 const set = @import("ziglangSet");
-const crossword_dict = @import("crossword_dict.zig");
+const trie = @import("trie.zig");
 const assert = std.debug.assert;
 
 
@@ -28,7 +28,7 @@ pub const ClueNode = struct {
     x: usize, // x-coordinate of the cell
     y: usize, // y-coordinate of the cell
     dir: Direction, // Direction of the clue (Across or Down)
-    clue: *crossword_dict.Clue, // Pointer to the clue
+    clue: *trie.Clue, // Pointer to the clue
     
     pub fn deinit(self: *Board) void {
         self.pool.destroy(self);
@@ -427,7 +427,7 @@ pub fn insert_clue_start_cell(
     x: usize,
     y: usize,
     dir: Direction,
-    clue: *crossword_dict.Clue,
+    clue: *trie.Clue,
 ) ?*ClueNode {
     if (x >= self.width or y >= self.height) {
         return false;

@@ -84,8 +84,8 @@ root: Node,
 clues: CluesArrayList, 
 allocator: std.mem.Allocator,
 
-pub const Dictionary = @This();
-pub fn init(allocator: std.mem.Allocator) !Dictionary{
+pub const Trie = @This();
+pub fn init(allocator: std.mem.Allocator) !Trie{
     return .{
         .root = .{
             .children = [_]?*Node{null} ** NUM_CHARACTERS,
@@ -107,11 +107,11 @@ fn free_node(node: *Node, allocator: std.mem.Allocator) void {
     }
 }
 
-pub fn deinit(self: *Dictionary) void {
+pub fn deinit(self: *Trie) void {
     free_node(&self.root, self.allocator);
 }
 
-pub fn insert(self: *Dictionary, clue: Clue) !void {
+pub fn insert(self: *Trie, clue: Clue) !void {
     for (clue.word) |c| {
         if (!is_valid_character(c)) {
             return error.InvalidCharacter;

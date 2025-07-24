@@ -1,5 +1,5 @@
 const std = @import("std");
-const crossword_dict = @import("crossword_dict.zig");
+const crossword_dict = @import("trie.zig");
 const crossword = @import("crossword.zig");
 const assert = std.debug.assert;
     
@@ -58,7 +58,7 @@ fn init_wildcard(
     return null;
 }
 
-dict: *crossword_dict.Dictionary = undefined,
+dict: *crossword_dict.Trie = undefined,
 start: bool,
 allocator: std.mem.Allocator = undefined,
 collection: std.ArrayList(Item),
@@ -66,7 +66,7 @@ pub const WordDFS = @This();
 
 pub fn init(
     allocator: std.mem.Allocator,
-    dict: *crossword_dict.Dictionary,
+    dict: *crossword_dict.Trie,
 ) !WordDFS {
     return .{
         .collection = std.ArrayList(Item).init(allocator),

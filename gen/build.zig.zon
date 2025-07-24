@@ -44,6 +44,10 @@
             .url = "git+https://github.com/deckarep/ziglang-set.git#66c5ab9ca1ca67bee2ac19d854589b3cf23cd6fe",
             .hash = "ziglangSet-0.0.1-VUjv0poUAgCNnJ8mjuXpZ81KSDap5Nmd_WLb7hFRS18f",
         },
+        .zig_csv = .{
+            .url = "git+https://github.com/pollend/zig-csv.git#62961cb2f9521f4e03addcb6bc050d921b9f8cfb",
+            .hash = "csv-0.0.1-OAr-UEM2AAB26Vvu09kH3yAr7s1JQvaxLA0Ff-pPJOJL",
+        },
     },
     .paths = .{
         "build.zig",
