@@ -148,6 +148,7 @@ const Config = struct {
         };
     }
 
+
     fn deinit(self: *Config) void {
         self.allocator.free(self.crossword_map);
     }

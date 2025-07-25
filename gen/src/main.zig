@@ -5,8 +5,10 @@ const set = @import("ziglangSet");
 const csv = @import("csv");
 const assert = std.debug.assert;
 const word_dfs = @import("word_dfs.zig");
-pub const WIDTH = 32;
-pub const HEIGHT = 32;
+pub const WIDTH = 992;
+pub const HEIGHT = 992;
+//pub const WIDTH = 8;
+//pub const HEIGHT = 8;
 
 pub const BLOCK_CHAR = '@'; // Character used to represent a blocked cell
 
@@ -15,7 +17,7 @@ pub const RemoveCell = struct {
     clue: *crossword_dict.Clue,
 };
 
-pub const ValidCellsSet = set.HashSetManaged(CellPos);
+pub const ValidCellsSet = set.HashSetManaged(@Vector(2, i32));
 pub const CluePool = std.heap.MemoryPool(ClueCrossing);
 
 pub const Board = struct {
@@ -36,6 +38,25 @@ pub const Board = struct {
     pub fn deinit(self: *Board) void {
         self.clue_pool.deinit();
         self.cells = undefined; // Free the cells array
+    }
+    
+    pub fn create_crossing_1(self: *Board, pos: @Vector(2, i32), dir: Direction, clue: *crossword_dict.Clue) !*ClueCrossing {
+        const crossing = try self.clue_pool.create();
+        errdefer self.clue_pool.destroy(crossing);
+        crossing.* = .{
+            .x = @intCast(pos[0]),
+            .y = @intCast(pos[1]),
+            .dir = dir,
+            .clue = clue,
+            .next = null,
+            .prev = null,
+        };
+        crossing.next = self.next;
+        if(self.next) |cross| {
+            cross.prev = crossing; // Link the previous crossing to the new one
+        }
+        self.next = crossing;
+        return crossing;
     }
 
     pub fn create_crossing(self: *Board, pos: CellPos, dir: Direction, clue: *crossword_dict.Clue) !*ClueCrossing {
@@ -81,7 +102,7 @@ pub fn print_cells(solver: *Board) void {
     std.debug.print("----------------------------------------\n", .{});
     for (0..HEIGHT) |y| {
         for (0..WIDTH) |x| {
-            const cell = get_cell(solver, x, y);
+            const cell = get_cell(solver, @Vector(2,i32){@intCast(x), @intCast(y)});
             if (cell.ch == ' ') {
                 std.debug.print(" . ", .{});
             } else if (cell.ch == BLOCK_CHAR) {
@@ -137,9 +158,6 @@ const Cell = struct {
     ch: u8,
     crossing_x: ?*ClueCrossing, // Pointer to the clue crossing node in the x-direction
     crossing_y: ?*ClueCrossing, // Pointer to the clue crossing node in the y-direction
-  
-    remove_x: usize,
-    remove_y: usize,
 
     attempts: usize, // Number of attempts to place a clue in this cell
     pub fn reset(self: *Cell) void {
@@ -304,6 +322,134 @@ fn remove_cell_dir(
     }
 }
 
+pub fn is_black_cell_required(
+    board: *Board,
+    pos: @Vector(2, i32),
+) bool {
+    if(is_valid_pos(pos - @Vector(2, i32){-1, 0})) {
+        return get_cell(board, pos - @Vector(2, i32){-1, 0}).crossing_x != null; 
+    }
+    if(is_valid_pos(pos - @Vector(2, i32){1, 0})) {
+        return get_cell(board, pos - @Vector(2, i32){1, 0}).crossing_x != null; 
+    }
+    if(is_valid_pos(pos - @Vector(2, i32){0, -1})) {
+        return get_cell(board, pos - @Vector(2, i32){0, -1}).crossing_y != null; 
+    }
+    if(is_valid_pos(pos - @Vector(2, i32){0, 1})) {
+        return get_cell(board, pos - @Vector(2, i32){0, 1}).crossing_y != null; 
+    }
+    return false;
+}
+
+pub fn update_valid_start_cells(
+    board: *Board,
+    pos: @Vector(2, i32),
+    dir: Direction,
+    valid_start_cells: *ValidCellsSet,
+) !void {
+    if(dir == .Across) {
+        var px: @Vector(2, i32) = pos;
+        while(px[0] > 0) : (px[0] -= 1) {
+            const ch = get_cell(board, px);
+            if(ch.ch == BLOCK_CHAR or ch.ch == ' ' or px[0] == 0) {
+                if(is_valid_pos(px + @Vector(2,i32){1,0}) and get_cell(board, px + @Vector(2,i32){1,0}).crossing_x == null) {
+                    assert(is_valid_pos(px + @Vector(2,i32){1,0}));
+                    _ = try valid_start_cells.add(px + @Vector(2,i32){1,0});
+                }
+                break; // Stop if we hit a blocked cell
+            }
+            _ = valid_start_cells.remove(px);
+        }
+        px = pos;
+        while(px[0] < WIDTH - 1) : (px[0] += 1) {
+            const ch = get_cell(board, px);
+            if(ch.ch == BLOCK_CHAR or ch.ch == ' ') {
+                break; // Stop if we hit a blocked cell
+            }
+            _ = valid_start_cells.remove(px);
+        }
+    } else {
+        var py: @Vector(2, i32) = pos;
+        while(py[1] > 0) : (py[1] -= 1) {
+            const ch = get_cell(board, py);
+            if(ch.ch == BLOCK_CHAR or ch.ch == ' ' or py[1] == 0) {
+                if(is_valid_pos(py + @Vector(2,i32){0,1}) and get_cell(board, py + @Vector(2,i32){0,1}).crossing_y == null) {
+                    assert(is_valid_pos(py + @Vector(2,i32){0,1}));
+                    _ = try valid_start_cells.add(py + @Vector(2,i32){0,1});
+                }
+                break; // Stop if we hit a blocked cell
+            }
+            _ = valid_start_cells.remove(py);
+        }
+        py = pos;
+        while(py[1] < HEIGHT - 1) : (py[1] += 1) {
+            const ch = get_cell(board, py);
+            if(ch.ch == BLOCK_CHAR or ch.ch == ' ') {
+                break; // Stop if we hit a blocked cell
+            }
+            _ = valid_start_cells.remove(py);
+        }
+    }
+
+}
+
+pub fn insert_clue_start_cell_2(
+    board: *Board,
+    pos: @Vector(2, i32),
+    dir: Direction,
+    clue: *crossword_dict.Clue,
+    valid_start_cells: *ValidCellsSet,
+) !void {
+    const ins = try board.create_crossing_1(pos, dir, clue);
+    errdefer board.free_crossing(ins);
+    const iter: @Vector(2, i32) = if(dir == .Across) @Vector(2, i32){1, 0} else @Vector(2, i32){0, 1};
+    if(is_valid_pos(pos - iter)) {
+        var back_cell = get_cell(board, pos - iter);
+        _ = valid_start_cells.remove(pos - iter); 
+        if(back_cell.ch == ' ' or back_cell.ch == BLOCK_CHAR) {
+            back_cell.ch = BLOCK_CHAR; // Set the left cell to a blocked cell
+        } else {
+            return;
+        }
+    }
+    var i: usize = 0;
+    var p: @Vector(2, i32) = pos;
+    while(i < clue.word.len) : ({p += iter; i += 1;}) {
+        solver_assert(board,is_valid_pos(p));
+        const cell = get_cell(board, p);
+        if(dir == .Across) {
+            solver_assert(board, cell.crossing_x == null);
+            solver_assert(board, if(cell.crossing_y == null) true else cell.ch == normalize_ascii(clue.word[i]));
+            cell.crossing_x = ins; 
+            cell.ch = normalize_ascii(clue.word[i]);
+            try update_valid_start_cells(board, p,  .Down , valid_start_cells); 
+        } else {
+            solver_assert(board, cell.crossing_y == null);
+            solver_assert(board, if(cell.crossing_x == null) true else cell.ch == normalize_ascii(clue.word[i]));
+            cell.crossing_y = ins; 
+            cell.ch = normalize_ascii(clue.word[i]);
+            try update_valid_start_cells(board, p,  .Across, valid_start_cells); 
+        }
+    }
+    const cap_pos = pos + (iter * @Vector(2, i32){@intCast(clue.word.len), @intCast(clue.word.len) });
+    if(is_valid_pos(cap_pos)) {
+        const cell = get_cell(board, cap_pos);
+        //solver_assert(board,cell.crossing_x == null);
+        solver_assert(board, cell.ch == ' ' or cell.ch == BLOCK_CHAR);
+        cell.ch = BLOCK_CHAR;
+        _ = valid_start_cells.remove(cap_pos); 
+        const right_pos = cap_pos + @Vector(2, i32){1, 0};
+        const down_pos = cap_pos + @Vector(2, i32){0, 1};
+        if(is_valid_pos(right_pos) and get_cell(board, right_pos).ch == ' ') {
+            _ = try valid_start_cells.add(right_pos); // Add the next cell to the valid start cells
+        }
+        if(is_valid_pos(down_pos) and get_cell(board, down_pos).ch == ' ') {
+            _ = try valid_start_cells.add(down_pos); // Add the next cell to the valid start cells
+        }
+    }
+}
+
+
 pub fn insert_clue_start_cell(
     board: *Board,
     x: usize,
@@ -324,7 +470,6 @@ pub fn insert_clue_start_cell(
             solver_assert(board,if(cell.crossing_y == null) true else cell.ch == normalize_ascii(clue.word[i]));
             if(can_start_clue_here(board, .{ .x = x + i, .y = y }, .Down)) 
                 _ = try valid_start_cells.add(.{ .x = x + i, .y = y });
-
             cell.ch = normalize_ascii(clue.word[i]); // Set the character in the cell
             cell.crossing_x = ins; // Set the crossing clue for each cell in the clue
         }
@@ -370,17 +515,34 @@ pub fn insert_clue_start_cell(
     }
 }
 
-fn get_cell(solver: *Board, x: usize, y: usize) *Cell {
-    assert(x < WIDTH and y < HEIGHT);
-    return &solver.cells[(y * WIDTH) + x];
+//fn get_cell(solver: *Board, x: usize, y: usize) *Cell {
+//    assert(x < WIDTH and y < HEIGHT);
+//    return &solver.cells[(y * WIDTH) + x];
+//}
+
+fn is_valid_pos(pos: @Vector(2, i32)) bool {
+    return pos[0] >= 0 and pos[0] < WIDTH and 
+           pos[1] >= 0 and pos[1] < HEIGHT;
 }
 
-fn get_cell_or_null(solver: *Board, x: usize, y: usize) ?*Cell {
-    if (x >= WIDTH or y >= HEIGHT) {
-        return null; // Out of bounds
-    }
-    return &solver.cells[(y * WIDTH) + x];
+fn get_cell(board: *Board, p: @Vector(2, i32)) *Cell {
+    assert(p[0] >= 0 and p[0] < WIDTH and p[1] >= 0 and p[1] < HEIGHT);
+    return &board.cells[(@as(usize,@intCast(p[1])) * WIDTH) + @as(usize,@intCast(p[0]))];
 }
+
+fn get_cell_or_null(board: *Board, pos: @Vector(2, i32)) ?*Cell {
+    if(is_valid_pos(pos)) {
+        return get_cell(board, pos);
+    }
+    return null;
+}
+
+//fn get_cell_or_null(solver: *Board, x: usize, y: usize) ?*Cell {
+//    if (x >= WIDTH or y >= HEIGHT) {
+//        return null; // Out of bounds
+//    }
+//    return &solver.cells[(y * WIDTH) + x];
+//}
 
 fn normalize_ascii(c: u8) u8 {
     var cc = std.ascii.toLower(c);
@@ -419,23 +581,23 @@ fn number_cell_accross(board: *Board, pos: CellPos, dir: Direction) usize {
 }
 
 fn can_start_clue_here(
-    board: *Board, pos: CellPos,
+    board: *Board, pos: @Vector(2, i32),
     dir: Direction,
 ) bool {
-    if (pos.x >= WIDTH or pos.y >= HEIGHT) {
+    if (pos[0] >= WIDTH or pos[1] >= HEIGHT) {
         return false;
     }
-    const cell = get_cell(board, pos.x, pos.y);
+    const cell = get_cell(board, pos);
     if(dir == .Down and cell.crossing_y == null) {
-        if(pos.y == 0) {
+        if(pos[1] == 0) {
             return true;
-        } else if((pos.x > 0 and pos.y > 0) and get_cell(board, pos.x, pos.y - 1).ch == BLOCK_CHAR) {
+        } else if((pos[0] > 0 and pos[1] > 0) and get_cell(board, pos  - @Vector(2,i32){0,1}).ch == BLOCK_CHAR) {
             return true; 
         }
     } else if(dir == .Across and cell.crossing_x == null) {
-        if(pos.x == 0) {
+        if(pos[0] == 0) {
             return true;
-        } else if((pos.x > 0 and pos.y > 0) and get_cell(board, pos.x - 1, pos.y).ch == BLOCK_CHAR) {
+        } else if((pos[0] > 0 and pos[1] > 0) and get_cell(board, pos - @Vector(2,i32){1,0}).ch == BLOCK_CHAR) {
             return true; 
         }
     }
@@ -458,6 +620,7 @@ pub fn main() !void {
 
     var board = try Board.init(allocator);
     defer board.deinit();
+
 
     //{
     //    const input = try std.fs.cwd().openFile("train.csv", .{});
@@ -531,7 +694,7 @@ pub fn main() !void {
             answer: []const u8,
         };
         std.debug.print("fetching clues from database...\n", .{});
-        var stmt = try db.prepare("SELECT clue, answer FROM crossword");
+        var stmt = try db.prepare("SELECT clue, answer FROM crossword WHERE LENGTH(answer) >= 3");
         defer stmt.deinit();
         var iter = try stmt.iterator(Row, .{});
         var inserted: usize = 0;
@@ -553,7 +716,6 @@ pub fn main() !void {
                 }
                 return err;
             };
-            if(inserted >= 1000) break;
             _ = arena.reset(.retain_capacity);
         }
     }
@@ -565,110 +727,106 @@ pub fn main() !void {
     var valid_start_cells = ValidCellsSet.init(allocator);
     defer valid_start_cells.deinit();
 
-    for (0..WIDTH) |x| _ = try valid_start_cells.add(.{ .x = x, .y = 0 }); 
-    for (0..HEIGHT) |y| _ = try valid_start_cells.add(.{ .x = 0, .y = y }); 
+    try update_valid_start_cells(&board, .{ 0, 0 }, .Down, &valid_start_cells); 
+
+    for (0..WIDTH) |x| {
+        assert(x < WIDTH);
+        _ = try valid_start_cells.add(.{ @intCast(x),  0 });
+    } 
+    for (0..HEIGHT) |y| {
+        assert(y < HEIGHT);
+        _ = try valid_start_cells.add(.{ 0, @intCast( y) });  
+    } 
 
     while(valid_start_cells.pop()) |pos| {
-        if(get_cell(&board,pos.x,pos.y).attempts >= 6) {
-            continue;
-        }
-        var remove_pos: CellPos = .{ .x = pos.x, .y = pos.y};  
+       // var remove_pos: CellPos = .{ .x = pos.x, .y = pos.y};  
         if(can_start_clue_here(&board, pos, .Down)) {
-            while(true) {
-                remove_pos.y += 1;
-                dfs.reset();
-                var clue: ?*crossword_dict.Clue = null;
-                while(!dfs.is_exausted()) {
-                    if(get_cell_or_null(&board, pos.x, pos.y + dfs.len())) |cell| {
-                        if(cell.ch == ' ') {
-                            if(!try dfs.append_wildcard(&random)) {
-                                if(dfs.get_clue()) |c| {
-                                    clue = c;
-                                    break;
-                                }
-                                _ = try dfs.backtrack();
-                            }
-                        } else if(cell.ch == BLOCK_CHAR) {
+            dfs.reset();
+            var clue: ?*crossword_dict.Clue = null;
+            while(!dfs.is_exausted()) {
+                if(get_cell_or_null(&board, pos + @Vector(2, i32){0, @intCast(dfs.len())})) |cell| {
+                    if(cell.ch == ' ') {
+                        if(!try dfs.append_wildcard(&random)) {
                             if(dfs.get_clue()) |c| {
                                 clue = c;
                                 break;
                             }
                             _ = try dfs.backtrack();
-                        } else if(!try dfs.append_fixed(cell.ch)) {
-                            _ = try dfs.backtrack();
                         }
-                    } else {
-                        // If the cell we want to append is out of bounds, we can still try to get a clue 
+                    } else if(cell.ch == BLOCK_CHAR) {
                         if(dfs.get_clue()) |c| {
                             clue = c;
                             break;
                         }
                         _ = try dfs.backtrack();
+                    } else if(!try dfs.append_fixed(cell.ch)) {
+                        _ = try dfs.backtrack();
                     }
-                }
-                if(clue) |c| {
-                    std.debug.print("Inserted clue down at ({d},{d}): {s}\n", .{pos.x, pos.y, c.word});
-                    try insert_clue_start_cell(&board, pos.x, pos.y, .Down, c, &valid_start_cells);
-                    break;
                 } else {
-                    //std.debug.print("No valid clue found down at ({d},{d}) removing ({d},{d})\n", .{pos.x, pos.y, remove_pos.x, remove_pos.y});
-                    if(remove_pos.y >= HEIGHT) {
-                        std.debug.print("Reached the end of the board skipping.\n", .{});
-                        break; // Stop if we reach the end of the board
+                    // If the cell we want to append is out of bounds, we can still try to get a clue 
+                    if(dfs.get_clue()) |c| {
+                        clue = c;
+                        break;
                     }
-                    assert(remove_pos.y < HEIGHT);
-                    get_cell(&board,pos.x,pos.y).attempts += 1;
-                    try remove_clue_by_cell(&board, .{.x = remove_pos.x, .y = remove_pos.y + random.intRangeAtMost(usize, 0, remove_pos.y + dfs.len())}, .Across, &valid_start_cells);
+                    _ = try dfs.backtrack();
                 }
             }
+            if(clue) |c| {
+                std.debug.print("Inserted clue down at ({d},{d}): {s}\n", .{pos[0], pos[1], c.word});
+                try insert_clue_start_cell_2(&board, pos, .Down, c, &valid_start_cells);
+            } else {
+                //std.debug.print("No valid clue found down at ({d},{d})\n", .{pos[0], pos[1]});
+                //if(remove_pos.y >= HEIGHT) {
+                //    std.debug.print("Reached the end of the board skipping.\n", .{});
+                //    break; // Stop if we reach the end of the board
+                //}
+                //assert(remove_pos.y < HEIGHT);
+                //get_cell(&board,pos.x,pos.y).attempts += 1;
+                //try remove_clue_by_cell(&board, .{.x = remove_pos.x, .y = remove_pos.y + random.intRangeAtMost(usize, 0, remove_pos.y + dfs.len())}, .Across, &valid_start_cells);
+            }
         } 
-        remove_pos = .{ .x = pos.x, .y = pos.y};
         if(can_start_clue_here(&board, pos, .Across)) {
-            while(true) {
-                remove_pos.x += 1;
-                dfs.reset();
-                var clue: ?*crossword_dict.Clue = null;
-                while(!dfs.is_exausted()) {
-                    if(get_cell_or_null(&board, pos.x + dfs.len(), pos.y)) |cell| {
-                        if(cell.ch == ' ') {
-                            if(!try dfs.append_wildcard(&random)) {
-                                if(dfs.get_clue()) |c| {
-                                    clue = c;
-                                    break;
-                                }
-                                _ = try dfs.backtrack();
-                            }
-                        } else if(cell.ch == BLOCK_CHAR) {
+            dfs.reset();
+            var clue: ?*crossword_dict.Clue = null;
+            while(!dfs.is_exausted()) {
+                if(get_cell_or_null(&board, pos + @Vector(2, i32){@intCast(dfs.len()), 0})) |cell| {
+                    if(cell.ch == ' ') {
+                        if(!try dfs.append_wildcard(&random)) {
                             if(dfs.get_clue()) |c| {
-                                    clue = c;
-                                    break;
+                                clue = c;
+                                break;
                             }
-                            _ = try dfs.backtrack();
-                        } else if(!try dfs.append_fixed(cell.ch)) {
                             _ = try dfs.backtrack();
                         }
-                    } else {
+                    } else if(cell.ch == BLOCK_CHAR) {
                         if(dfs.get_clue()) |c| {
-                            clue = c;
-                            break;
+                                clue = c;
+                                break;
                         }
                         _ = try dfs.backtrack();
+                    } else if(!try dfs.append_fixed(cell.ch)) {
+                        _ = try dfs.backtrack();
                     }
-                }
-                if(clue) |c| {
-                    std.debug.print("Inserted clue across at ({d},{d}): {s}\n", .{pos.x, pos.y, c.word});
-                    try insert_clue_start_cell( &board, pos.x, pos.y, .Across, c, &valid_start_cells);
-                    break;
                 } else {
-                    std.debug.print("No valid clue found across at ({d},{d}) removing ({d},{d})\n", .{pos.x, pos.y, remove_pos.x, remove_pos.y});
-                    if(remove_pos.x >= WIDTH) {
-                        //std.debug.print("Reached the end of the board skipping.\n", .{});
-                        break; // Stop if we reach the end of the board
+                    if(dfs.get_clue()) |c| {
+                        clue = c;
+                        break;
                     }
-                    get_cell(&board,pos.x,pos.y).attempts += 1;
-                    assert(remove_pos.x < WIDTH);
-                    try remove_clue_by_cell(&board,  .{.x = remove_pos.x + random.intRangeAtMost(usize, 0, remove_pos.y + dfs.len()), .y = remove_pos.y}, .Down, &valid_start_cells);
+                    _ = try dfs.backtrack();
                 }
+            }
+            if(clue) |c| {
+                std.debug.print("Inserted clue across at ({d},{d}): {s}\n", .{pos[0], pos[1], c.word});
+                try insert_clue_start_cell_2( &board, pos, .Across, c, &valid_start_cells);
+            } else {
+                //std.debug.print("No valid clue found across at ({d},{d})\n", .{pos[0], pos[1]});
+                //if(remove_pos.x >= WIDTH) {
+                //    //std.debug.print("Reached the end of the board skipping.\n", .{});
+                //    break; // Stop if we reach the end of the board
+                //}
+                //get_cell(&board,pos.x,pos.y).attempts += 1;
+                //assert(remove_pos.x < WIDTH);
+                //try remove_clue_by_cell(&board,  .{.x = remove_pos.x + random.intRangeAtMost(usize, 0, remove_pos.y + dfs.len()), .y = remove_pos.y}, .Down, &valid_start_cells);
             }
         } 
     }

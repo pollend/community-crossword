@@ -46,9 +46,8 @@
     ver: Clue | undefined;
   }
   let clueSlots: (ClueSlots | undefined)[] = $state([]);
-  let hightligthSlots: number[] = $state([]);
 
-  const refreshQuads = new Throttle(100, () => {
+  const refreshQuads = new Throttle(200, () => {
     const updated: Quad[] = [];
     const viewCells = getViewRectCells();
     const viewQuad = getViewRectQuad(viewCells);
@@ -271,6 +270,7 @@
 
     document.addEventListener("keydown", (event) => {
       const value = charToValue(event.key);
+
       if (value !== undefined && selection.terminated === false) {
         if (selection.center) {
           const rec = getViewRectCells();
@@ -408,7 +408,6 @@
       ).fill(0xffffff);
       backGraphics.clear();
       const center = selection.center;
-      hightligthSlots = [];
       if (center) {
         let x0 = center.x;
         let x1 = center.x;

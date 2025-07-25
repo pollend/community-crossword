@@ -91,7 +91,7 @@ export class Quad {
       const px = i % GRID_SIZE;
       const py = Math.floor(i / GRID_SIZE);
       const cellNumber = this.clueNumbers[i];
-      if (cellNumber > 0) {
+      if (cellNumber >= 0) {
         const tex = textPool.get();
         tex.anchor.set(0, 1);
         tex.style = clueNumberStyle;
