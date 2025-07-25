@@ -11,7 +11,7 @@ export default ({ mode }) => {
       open: true,
     },
     define: {
-      BASE_URL: process.env.BASE_URL || "'ws://localhost:3010'",
+      BASE_URL: process.env.BASE_URL,
     },
   });
 };

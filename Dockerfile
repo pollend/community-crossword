@@ -26,7 +26,7 @@ RUN npm install
 RUN npm run build
 
 # Build the application
-RUN zig build --release=safe
+RUN zig build --release=fast
 
 # Final stage - minimal runtime image
 FROM debian:latest

@@ -210,8 +210,12 @@
     await app.init({ background: "#FFFFFF", resizeTo: frame });
     frame!.appendChild(app.canvas);
 
-    const protocol = window.location.protocol.includes('https') ? 'wss': 'ws'
-    socket = new WebSocket(`${protocol}://${location.host}`);
+    if(window.BASE_URL) {
+      socket = new WebSocket(`${window.BASE_URL}`);
+    } else {
+      const protocol = window.location.protocol.includes('https') ? 'wss': 'ws'
+      socket = new WebSocket(`${protocol}://${location.host}`);
+    }
     //socket = new WebSocket(`${window.BASE_URL}/ws`);
     socket.binaryType = "arraybuffer";
 
