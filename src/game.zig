@@ -12,6 +12,8 @@ pub const assert = std.debug.assert;
 
 pub const GRID_SIZE: u32 = 16;
 pub const GRID_LEN: u32 = GRID_SIZE * GRID_SIZE;
+
+pub const GRID_SZ: @Vector(2, u32) = @Vector(2, u32){ GRID_SIZE, GRID_SIZE };
 pub const Value = enum(u7) {
     empty, // empty cell
     dash, // space/dash
@@ -44,6 +46,26 @@ pub const Value = enum(u7) {
     z,
 };
 
+
+pub fn to_cell_index(global_cell_pos: @Vector(2, u32)) usize {
+    const local_cell_pos = global_cell_pos % @Vector(2, u32){ GRID_SIZE, GRID_SIZE };
+    return (local_cell_pos[1] * GRID_SIZE) + local_cell_pos[0];
+}
+
+pub fn to_quad_index(quad_pos: @Vector(2, u32), quad_size: @Vector(2, u32)) ?usize  {
+    if (quad_pos[0] >= quad_size[0] or quad_pos[1] >= quad_size[1]) {
+        return null;
+    }
+    return (quad_pos[1] * quad_size[0]) + quad_pos[0];
+}
+    
+pub fn to_quad_size(board_size: @Vector(2, u32)) @Vector(2, u32) {
+    return board_size / @Vector(2, u32){ GRID_SIZE, GRID_SIZE };
+}
+
+pub fn map_to_quad_pos(pos: @Vector(2, u32)) @Vector(2, u32) {
+    return pos / @Vector(2, u32){GRID_SIZE, GRID_SIZE};
+}
 
 pub fn map_to_quad(rec: rect.Rect) rect.Rect {
     const x: u32 = rec.x / GRID_SIZE;
@@ -158,14 +180,10 @@ pub const Quad = struct {
     overlapping_clues: std.ArrayList(*Clue), // clues that overlap with this quad
     clues: std.ArrayList(*Clue), // clues that are starting in this quad
 
-    pub fn get_crossing_clues(self: *Quad, pos: @Vector(2, u32), collection: []*Clue, len: *usize) void {
+    pub fn get_crossing_clues(self: *Quad, pos: @Vector(2, u32), clues: *std.ArrayList(*game.Clue)) !void {
         for (self.overlapping_clues.items) |cl| {
-            if (len.* >= collection.len) {
-                return;
-            }
             if (cl.to_rect().contains_point(pos)) {
-                collection[len.*] = cl;
-                len.* += 1;
+                try clues.append(cl);
             }
         }
     }
@@ -216,68 +234,172 @@ pub const Quad = struct {
     }
 };
 
-pub fn BoardRectIterator(Context: type, comptime enter: fn (*Context, quad: *Quad) void, comptime exit: fn (*Context, quad: *Quad) void) type {
-    return struct {
-        board: *Board,
-        iter: rect.RectIterator,
-        quad: ?*Quad = null,
-        context: Context,
-
-        const Self = @This();
-
-        pub fn init(c: Context, board: *Board, rc: rect.Rect) Self {
-            return .{
-                .board = board,
-                .iter = rc.iterator(),
-                .quad = null,
-                .context = c,
-            };
-        }
-
-        pub fn deinit(self: *Self) void {
-            if (self.quad) |q| {
-                exit(&self.context, q);
-            }
-        }
-        // returns cell position quad and the relative position within the quad
-        pub fn next(self: *Self) ?struct { q: *Quad, p: @Vector(2, u32) } {
-            while (self.iter.next()) |cell_pos| {
-                if (self.quad) |q| {
-                    if (q.quad_rect_global().contains_point(cell_pos)) {
-                        return .{ .q = q, .p = q.to_local(cell_pos) };
-                    } else {
-                        exit(&self.context, q);
-                        self.quad = null;
-                    }
-                }
-                if (self.board.get_quad_from_cell_pos(cell_pos)) |q| {
-                    enter(&self.context, q);
-                    self.quad = q;
-                    return .{ .q = q, .p = q.to_local(cell_pos) };
-                }
-            }
-            if (self.quad) |q| {
-                exit(&self.context, q);
-                self.quad = null;
-            }
-            return null;
-        }
-    };
-}
-
-pub const DefaultQuadDefault = game.BoardRectIterator(void, _default_board_enter, _default_board_exit);
-fn _default_board_enter(_: *void, _: *game.Quad) void {}
-fn _default_board_exit(_: *void, _: *game.Quad) void {}
-
 pub const Board = struct {
     size: @Vector(2, u32),
     quads: []Quad,
+    clues: ClueList,
+    allocator: std.mem.Allocator,
+
+    pub fn deinit(self: *Board) void {
+        for (self.quads) |*quad| {
+            quad.deinit();
+        }
+        self.clues.deinit();
+        self.allocator.free(self.quads);
+    }
+
+    pub fn load_from_reader(
+        allocator: std.mem.Allocator,
+        reader: std.io.AnyReader,
+    ) !Board {
+        const board_width = reader.readInt(u32, .little) catch |e| {
+            std.log.err("Failed to read map file: {any}", .{e});
+            return e;
+        };
+        const board_height = reader.readInt(u32, .little) catch |e| {
+            std.log.err("Failed to read map file: {any}", .{e});
+            return e;
+        };
+
+        if (board_width % GRID_SIZE != 0 or board_height % GRID_SIZE != 0) {
+            std.log.err("Width and height must be multiples of {d}", .{GRID_SIZE});
+            return error.SizeNotMultipleOfGridSize;
+        }
+        if (board_width == 0 or board_height == 0) {
+            std.log.err("Width and height must be greater than 0", .{});
+            return error.InvalidSize;
+        }
+        var clues = ClueList.init(allocator);
+        {
+            var buffer = std.ArrayList(u8).init(allocator);
+            defer buffer.deinit();
+            while (true) {
+                buffer.clearRetainingCapacity();
+                const x = reader.readInt(u32, .little) catch |e| switch (e) {
+                    error.EndOfStream => break,
+                    else => |err| {
+                        std.log.err("Failed to read map file: {any}", .{err});
+                        return err;
+                    },
+                };
+                const y = reader.readInt(u32, .little) catch |e| switch (e) {
+                    error.EndOfStream => break,
+                    else => |err| {
+                        std.log.err("Failed to read map file: {any}", .{err});
+                        return err;
+                    },
+                };
+                const dir = reader.readInt(u8, .little) catch |e| switch (e) {
+                    error.EndOfStream => break,
+                    else => |err| {
+                        std.log.err("Failed to read map file: {any}", .{err});
+                        return err;
+                    },
+                };
+
+                const word_len = reader.readInt(u32, .little) catch |e| switch (e) {
+                    error.EndOfStream => break,
+                    else => |err| {
+                        std.log.err("Failed to read map file: {any}", .{err});
+                        return err;
+                    },
+                };
+                try buffer.resize(word_len);
+                reader.readNoEof(buffer.items) catch |e| switch (e) {
+                    error.EndOfStream => break,
+                    else => |err| {
+                        std.log.err("Failed to read map file: {any}", .{err});
+                        return err;
+                    },
+                };
+                const clue_len = reader.readInt(u32, .little) catch |e| switch (e) {
+                    error.EndOfStream => break,
+                    else => |err| {
+                        std.log.err("Failed to read map file: {any}", .{err});
+                        return err;
+                    },
+                };
+                try buffer.resize(clue_len + word_len);
+                reader.readNoEof(buffer.items[word_len..]) catch |e| switch (e) {
+                    error.EndOfStream => break,
+                    else => |err| {
+                        std.log.err("Failed to read map file: {any}", .{err});
+                        return err;
+                    },
+                };
+                const word_slice = buffer.items[0..word_len];
+                const clue_slice = buffer.items[word_len..];
+                try clues.append(game.Clue.init_from_ascii(
+                    allocator,
+                    word_slice,
+                    clue_slice,
+                    .{
+                        x,
+                        y,
+                    },
+                    @enumFromInt(dir),
+                ) catch |e| {
+                    std.log.err("Failed to create clue: {any} {s} - {s}", .{ e, word_slice, clue_slice });
+                    return e;
+                });
+            }
+        }
+        const quads = try allocator.alloc(Quad, (board_width / GRID_SIZE) * (board_height / GRID_SIZE)); // Initial capacity for clients
+        for (quads, 0..) |*quad, index| {
+            const quad_x = index % (board_width / GRID_SIZE);
+            const quad_y = index / (board_width / GRID_SIZE);
+            quad.* = try Quad.init(allocator, @intCast(quad_x), @intCast(quad_y));
+        }
+        const quad_size = to_quad_size(@Vector(2, u32){board_width, board_height});
+        var id: u32 = 0;
+        for (clues.items) |*clue| {
+            id += 1;
+            clue.id = id; // Assign a unique ID to the clue
+            if (to_quad_index(map_to_quad_pos(clue.pos), quad_size)) |idx| {
+                quads[idx].clues.append(clue) catch |err| {
+                    std.log.err("Failed to append clue to quad: {any}", .{err});
+                    return err;
+                };
+            } else {
+                std.log.warn("clue is incomplete trying to get quad: {any}", .{clue.pos});
+            }
+            const cell_pos_dir: @Vector(2, u32) = if(clue.dir == .Across) @Vector(2, u32){1, 0} else @Vector(2, u32){0, 1};
+            const quad_hit = if(clue.dir == .Across) map_to_quad(rect.create(clue.pos[0], clue.pos[1], @as(u32, @intCast(clue.word.len)), 1))
+                else map_to_quad(rect.create(clue.pos[0], clue.pos[1], 1, @as(u32, @intCast(clue.word.len))));
+            var iter = quad_hit.iterator();
+            while (iter.next()) |quad_pos| {
+                if (to_quad_index(quad_pos, quad_size)) |idx| {
+                    quads[idx].overlapping_clues.append(clue) catch |err| {
+                        std.log.err("Failed to append clue to quad: {any}", .{err});
+                        return err;
+                    };
+                } else {
+                    std.log.warn("clue is incomplete trying to get quad: {any} quads: {any}", .{ quad_pos, quad_hit });
+                }
+            }
+
+            for (clue.word, 0..) |_, index| {
+                const pos = clue.pos + (cell_pos_dir * @Vector(2,u32){@intCast(index), @intCast(index)});
+                if(to_quad_index(map_to_quad_pos(pos), quad_size)) |quad_idx| {
+                    quads[quad_idx].input[to_cell_index(pos)].value = Value.empty;  
+                } else {
+                    std.log.err("Failed to set value for clue at position {any}", .{pos});
+                }
+            }
+        }
+        return .{
+            .allocator = allocator,
+            .size = @Vector(2, u32){ board_width, board_height },
+            .quads = quads,
+            .clues = clues,
+        };
+    }
 
     pub fn lock_quads(self: *Board, quad_rect: rect.Rect) void {
         var iter = quad_rect.iterator();
         while (iter.next()) |pos| {
-            if (self.get_quad(pos)) |quad| {
-                quad.lock.lock();
+            if(game.to_quad_index(pos, game.to_quad_size(self.size))) |idx| {
+                self.quads[idx].lock.lock();
             }
         }
     }
@@ -285,25 +407,10 @@ pub const Board = struct {
     pub fn unlock_quads(self: *Board, quad_rect: rect.Rect) void {
         var iter = quad_rect.iterator();
         while (iter.next()) |pos| {
-            if (self.get_quad(pos)) |quad| {
-                quad.lock.unlock();
+            if(game.to_quad_index(pos, game.to_quad_size(self.size))) |idx| {
+                self.quads[idx].lock.unlock();
             }
         }
-    }
-
-    pub fn set_value_from_cell_position(self: *Board, pos: @Vector(2, u32), value: Value) bool {
-        if (get_quad_from_cell_pos(self, pos)) |quad| {
-            const cell_x = pos[0] % GRID_SIZE;
-            const cell_y = pos[1] % GRID_SIZE;
-
-            quad.lock.lock();
-            defer quad.lock.unlock();
-
-            const index = (cell_y * GRID_SIZE) + cell_x;
-            quad.input[index].value = value;
-            return true;
-        }
-        return false;
     }
 
     pub fn quad_width(self: *Board) u32 {
@@ -314,73 +421,23 @@ pub const Board = struct {
         return self.size[1] / GRID_SIZE;
     }
 
-    pub fn get_quad(self: *Board, pos: @Vector(2, u32)) ?*Quad {
-        const quad_x = pos[0];
-        const quad_y = pos[1];
-        if (quad_x >= self.quad_width() or quad_y >= self.quad_height()) {
-            return null;
-        }
-        const index = (quad_y * self.quad_width()) + quad_x;
-        const quad = &self.quads[index];
-        assert(quad.x == quad_x and quad.y == quad_y);
-        return quad;
-    }
-
-    pub fn get_cell_from_cell_pos(self: *Board, pos: @Vector(2, u32)) ?*Cell {
-        if (get_quad_from_cell_pos(self, pos)) |quad| {
-            const local_pos = quad.to_local(pos);
-            return quad.get_cell(local_pos);
-        }
-        return null;
-    }
-
-    pub fn get_quad_from_cell_pos(self: *Board, pos: @Vector(2, u32)) ?*Quad {
-        const quad_x = pos[0] / GRID_SIZE;
-        const quad_y = pos[1] / GRID_SIZE;
-        if (quad_x >= self.quad_width() or quad_y >= self.quad_height()) {
-            return null;
-        }
-        const index = (quad_y * self.quad_width()) + quad_x;
-        const quad = &self.quads[index];
-        assert(quad.x == quad_x and quad.y == quad_y);
-        return quad;
-    }
-
-    pub fn register_client_board(
-        board: *game.Board,
-        c: *client.Client,
-        add_rect: rect.Rect,
-    ) void {
-        var iter = add_rect.iterator();
-        while (iter.next()) |pos| {
-            if (board.get_quad(pos)) |quad| {
-                quad.client_lock.lock();
-                defer quad.client_lock.unlock();
-                quad.clients.append(c) catch |err| {
-                    std.log.err("Failed to append client to quad: {any}", .{err});
-                    unregister_client_board(board, c, add_rect);
-                };
-            }
-        }
-    }
-
     pub fn update_client_rect(
-        board: *game.Board,
+        self: *game.Board,
         c: *client.Client,
-        old_rect: rect.Rect,
-        new_rect: rect.Rect,
+        old_quad_rect: rect.Rect,
+        new_quad_rect: rect.Rect,
     ) void {
         {
-            var iter = old_rect.iterator();
-            while (iter.next()) |pos| {
-                if (new_rect.contains_point(pos))
+            var iter = old_quad_rect.iterator();
+            while (iter.next()) |quad_pos| {
+                if (new_quad_rect.contains_point(quad_pos))
                     continue;
-                if (game.state.board.get_quad(pos)) |quad| {
-                    quad.client_lock.lock();
-                    defer quad.client_lock.unlock();
-                    for (quad.clients.items, 0..) |cl, index| {
+                if(to_quad_index(quad_pos, to_quad_size(self.size))) |idx| {
+                    self.quads[idx].client_lock.lock();
+                    defer self.quads[idx].client_lock.unlock();
+                    for (self.quads[idx].clients.items, 0..) |cl, index| {
                         if (cl == c) {
-                            _ = quad.clients.swapRemove(index);
+                            _ = self.quads[idx].clients.swapRemove(index);
                             break;
                         }
                     }
@@ -388,16 +445,17 @@ pub const Board = struct {
             }
         }
         {
-            var iter = new_rect.iterator();
-            while (iter.next()) |pos| {
-                if (old_rect.contains_point(pos))
+            var iter = new_quad_rect.iterator();
+            while (iter.next()) |quad_pos| {
+                if (old_quad_rect.contains_point(quad_pos))
                     continue;
-                if (game.state.board.get_quad(pos)) |quad| {
-                    quad.client_lock.lock();
-                    defer quad.client_lock.unlock();
-                    quad.clients.append(c) catch |err| {
+                if(to_quad_index(quad_pos, to_quad_size(self.size))) |idx| {
+                    self.quads[idx].client_lock.lock();
+                    defer self.quads[idx].client_lock.unlock();
+                    self.quads[idx].clients.append(c) catch |err| {
                         std.log.err("Failed to append client to quad: {any}", .{err});
-                        unregister_client_board(board, c, new_rect);
+                        unregister_client_board(self, c, new_quad_rect);
+                        return;
                     };
                 }
             }
@@ -405,18 +463,18 @@ pub const Board = struct {
     }
 
     pub fn unregister_client_board(
-        board: *game.Board,
+        self: *game.Board,
         c: *client.Client,
-        remove_rect: rect.Rect,
+        remove_quad_rect: rect.Rect,
     ) void {
-        var iter = remove_rect.iterator();
-        while (iter.next()) |pos| {
-            if (board.get_quad(pos)) |quad| {
-                quad.client_lock.lock();
-                defer quad.client_lock.unlock();
-                for (quad.clients.items, 0..) |cl, index| {
+        var iter = remove_quad_rect.iterator();
+        while (iter.next()) |quad_pos| {
+            if(to_quad_index(quad_pos, to_quad_size(self.size))) |idx| {
+                self.quads[idx].client_lock.lock();
+                defer self.quads[idx].client_lock.unlock();
+                for (self.quads[idx].clients.items, 0..) |cl, client_index| {
                     if (cl == c) {
-                        _ = quad.clients.swapRemove(index);
+                        _ = self.quads[idx].clients.swapRemove(client_index);
                         break;
                     }
                 }
@@ -427,115 +485,30 @@ pub const Board = struct {
 
 pub const State = struct {
     client_id: u32,
-    client_lock: std.Thread.Mutex,
+    client_lock: std.Thread.Mutex = .{},
     clients: ClientArrayList,
 
-    allocator: std.mem.Allocator,
-    clues: ClueList,
+    gpa: std.mem.Allocator,
     board: Board,
 
-    pub fn deinit(self: *State) void {
-        for (self.board.quads) |*quad| quad.deinit();
-        for (self.clues.items) |*clue| clue.deinit();
-        self.clients.deinit();
-        self.clues.deinit();
-        self.allocator.free(self.board.quads);
-    }
+    //pub fn deinit(self: *State) void {
+    //    //for (self.board.quads) |*quad| quad.deinit();
+    //    //for (self.clues.items) |*clue| clue.deinit();
+    //    self.clients.deinit();
+    //    self.board.deinit();
+    //    self.gpa.free(self.board.quads);
+    //}
 
-    pub fn init(allocator: std.mem.Allocator, width: u32, height: u32, clues: ClueList) !State {
-        std.debug.print("Initializing game state with width: {d}, height: {d} clues: {d}\n", .{ width, height, clues.items.len });
-        if (width % GRID_SIZE != 0 or height % GRID_SIZE != 0) {
-            std.log.err("Width and height must be multiples of {d}", .{GRID_SIZE});
-            return error.SizeNotMultipleOfGridSize;
-        }
-
-        if (width == 0 or height == 0) {
-            std.log.err("Width and height must be greater than 0", .{});
-            return error.InvalidSize;
-        }
-
-        const quads = try allocator.alloc(Quad, (width / GRID_SIZE) * (height / GRID_SIZE)); // Initial capacity for clients
-        for (quads, 0..) |*quad, index| {
-            const quad_x = index % (width / GRID_SIZE);
-            const quad_y = index / (width / GRID_SIZE);
-            quad.* = try Quad.init(allocator, @intCast(quad_x), @intCast(quad_y));
-        }
-
-        var board: Board = .{
-            .size = .{ width, height },
-            .quads = quads,
-        };
-
-        var id: u32 = 0;
-        for (clues.items) |*clue| {
-            id += 1;
-            clue.id = id; // Assign a unique ID to the clue
-            if (board.get_quad_from_cell_pos(clue.pos)) |quad| {
-                quad.lock.lock();
-                defer quad.lock.unlock();
-                quad.clues.append(clue) catch |err| {
-                    std.log.err("Failed to append clue to quad: {any}", .{err});
-                    return err;
-                };
-            } else {
-                std.log.warn("clue is incomplete trying to get quad: {any}", .{clue.pos});
-            }
-            switch (clue.dir) {
-                .Across => {
-                    const quad_hit = map_to_quad(rect.create(clue.pos[0], clue.pos[1], @as(u32, @intCast(clue.word.len)), 1));
-                    var iter = quad_hit.iterator();
-                    while (iter.next()) |pos| {
-                        if (board.get_quad(pos)) |quad| {
-                            quad.lock.lock();
-                            defer quad.lock.unlock();
-                            quad.overlapping_clues.append(clue) catch |err| {
-                                std.log.err("Failed to append clue to quad: {any}", .{err});
-                                return err;
-                            };
-                        } else {
-                            std.log.warn("clue is incomplete trying to get quad: {any} quads: {any}", .{ pos, quad_hit });
-                        }
-                    }
-                    for (clue.word, 0..) |_, index| {
-                        const pos = @Vector(2, u32){ clue.pos[0] + @as(u32, @intCast(index)), clue.pos[1] };
-                        if (!board.set_value_from_cell_position(pos, Value.empty)) {
-                            std.log.err("Failed to set value for clue at position {any}", .{pos});
-                        }
-                    }
-                },
-                .Down => {
-                    const quad_hit = map_to_quad(rect.create(clue.pos[0], clue.pos[1], 1, @as(u32, @intCast(clue.word.len))));
-                    var iter = quad_hit.iterator();
-                    while (iter.next()) |pos| {
-                        if (board.get_quad(pos)) |quad| {
-                            quad.lock.lock();
-                            defer quad.lock.unlock();
-                            quad.overlapping_clues.append(clue) catch |err| {
-                                std.log.err("Failed to append clue to quad: {any}", .{err});
-                                return err;
-                            };
-                        } else {
-                            std.log.warn("clue is incomplete trying to get quad: {any}", .{pos});
-                        }
-                    }
-                    for (clue.word, 0..) |_, index| {
-                        const pos = @Vector(2, u32){ clue.pos[0], clue.pos[1] + @as(u32, @intCast(index)) };
-                        if (!board.set_value_from_cell_position(pos, Value.empty)) {
-                            std.log.err("Failed to set value for clue at position {any}", .{pos});
-                        }
-                    }
-                },
-            }
-        }
-
-        return .{
-            .allocator = allocator,
-            .client_id = 0,
-            .client_lock = .{},
-            .clients = ClientArrayList.init(allocator),
-            .board = board,
-            .clues = clues,
-        };
-    }
+    //pub fn init(allocator: std.mem.Allocator, options: struct {
+    //    board: Board
+    //}) !State {
+    //    return .{
+    //        .allocator = allocator,
+    //        .client_id = 0,
+    //        .client_lock = .{},
+    //        .clients = ClientArrayList.init(allocator),
+    //        .board = options.board
+    //    };
+    //}
 };
 pub var state: State = undefined;

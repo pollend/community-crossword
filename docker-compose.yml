@@ -36,3 +36,17 @@ services:
       - ./eslint.config.mjs:/app/eslint.config.mjs:ro
       - ./index.html:/app/index.html:ro
     command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+  minio:
+    image: minio/minio
+    container_name: minio_server
+    ports:
+      - "9000:9000" # S3 API port
+      - "9001:9001" # MinIO Console port
+    volumes:
+      - minio_data:/data # Persistent storage for MinIO data
+    environment:
+      MINIO_ROOT_USER: minioadmin # Root username
+      MINIO_ROOT_PASSWORD: minioadmin # Root password
+    command: server --console-address ":9001" /data
+volumes:
+  minio_data: {} # Defines a named volume for data persistence

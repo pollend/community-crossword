@@ -8,6 +8,10 @@
             .url = "git+https://github.com/zigzap/zap?ref=v0.10.6#e1c973d5e2b282c673d91d857459cc389eab80bb",
             .hash = "zap-0.10.6-GoeB89aDJAAUufiqV7sUCudCoSSCle0E2fbw388bO1Ug",
         },
+        .aws = .{
+            .url = "git+https://github.com/elerch/aws-sdk-for-zig.git#3979d32a1d399e2a8f5d967b392160a3dd099878",
+            .hash = "aws-0.0.1-SbsFcJDcCQBLsXKOoLLMSKGvmlFiosiGArxAbQPCQhKv",
+        },
     },
     .paths = .{
         "build.zig",
