@@ -280,6 +280,7 @@ pub fn main() !void {
         .clients = std.ArrayList(*client.Client).init(allocator),
         .client_id = 0,
         .backup_timestamp = 0,
+        .generate_map_timestamp = 0,
         .running = std.atomic.Value(bool).init(true),
 
         .crossword_cache = crossword_cache,

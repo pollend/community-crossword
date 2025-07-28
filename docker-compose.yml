@@ -20,7 +20,7 @@ services:
       - ./build.zig:/app/build.zig:ro
       - ./build.zig.zon:/app/build.zig.zon:ro
       - ./crossword.map:/app/crossword.map:ro
-      - ./dist:/app/dist:ro
+      - ./dist:/app/dist
     depends_on:
       - web-dev
       - minio

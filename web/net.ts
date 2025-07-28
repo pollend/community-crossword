@@ -9,6 +9,7 @@ export enum MessageID {
   set_view = 1,
   sync_block = 2,
   sync_input_cell = 3,
+  ping = 4,
 }
 
 export enum Value {
@@ -225,6 +226,14 @@ export function netParseReady(view: DataView, offset: number) {
   };
 }
 
+export function netParsePong(view: DataView, offset: number) {
+  const percentage = view.getFloat32(offset, true);
+  offset += 4;
+  return {
+    percentage: percentage,
+  }
+}
+
 export function netParseSyncChunk(
   view: DataView,
   offset: number,
@@ -278,6 +287,16 @@ export function netSendCell(ws: WebSocket, x: number, y: number, value: Value) {
   view.setUint32(offset, y, true);
   offset += 4;
   view.setUint8(offset, value);
+  ws.send(buffer);
+}
+
+export function netSendPing(ws: WebSocket) {
+  // 1 byte for ID
+  const buffer = new ArrayBuffer(1);
+  const view = new DataView(buffer);
+  let offset = 0;
+  view.setUint8(offset, MessageID.ping);
+  offset += 1;
   ws.send(buffer);
 }
 

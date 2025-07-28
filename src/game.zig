@@ -7,13 +7,18 @@ const rect = @import("rect.zig");
 const aws = @import("aws");
 const WebsocketHandler = WebSockets.Handler(client.Client);
 
+const stb_writer = @cImport({
+    @cInclude("stb_image_write.h");
+});
+
 pub const ClientArrayList = std.ArrayList(*client.Client);
 pub const ClueList = std.ArrayList(Clue);
 pub const assert = std.debug.assert;
 
 pub const GRID_SIZE: u32 = 16;
 pub const GRID_LEN: u32 = GRID_SIZE * GRID_SIZE;
-pub const BACKUP_TIME_STAMP: i64 = std.time.s_per_min * 2;
+pub const BACKUP_TIME_STAMP: i64 = std.time.s_per_min * 30;
+pub const MAP_GENERATION_TIME: i64 = 5;//std.time.s_per_min * 60; // 5 minutes
 
 pub const MAP_MAGIC_NUMBER: u32 = 0x1F9F1E9f; 
 pub const MAP_CACHE_MAGIC_NUMBER: u32 = 0x1F9F1E9c; // Different magic number for cache
@@ -244,6 +249,8 @@ pub const Board = struct {
     clues: ClueList,
     allocator: std.mem.Allocator,
 
+    clues_completed: std.atomic.Value(u32),
+
     pub fn deinit(self: *Board) void {
         for (self.quads) |*quad| {
             quad.deinit();
@@ -251,6 +258,7 @@ pub const Board = struct {
         self.clues.deinit();
         self.allocator.free(self.quads);
     }
+
 
     pub fn write_cache_s3(
         self: *Board,
@@ -454,7 +462,8 @@ pub const Board = struct {
             const quad_y = index / (board_width / GRID_SIZE);
             quad.* = try Quad.init(allocator, @intCast(quad_x), @intCast(quad_y));
         }
-        
+        var completed_clues: u32 = 0;
+
         const quad_size = to_quad_size(@Vector(2, u32){board_width, board_height});
         var is_valid_cache = false;
         invalid_cache: {
@@ -548,6 +557,19 @@ pub const Board = struct {
                             std.log.err("Failed to set value for clue at position {any}", .{pos});
                         }
                     }
+                } else {
+                    var is_complete = true;
+                    for (clue.word, 0..) |_, index| {
+                        const pos = clue.pos + (cell_pos_dir * @Vector(2,u32){@intCast(index), @intCast(index)});
+                        if(to_quad_index(map_to_quad_pos(pos), quad_size)) |quad_idx| {
+                           if(quads[quad_idx].input[to_cell_index(pos)].value != clue.word[index]) {
+                                is_complete = false;    
+                           }
+                        }
+                    }
+                    if(is_complete) {
+                        completed_clues += 1;
+                    }
                 }
             }
         }
@@ -556,6 +578,7 @@ pub const Board = struct {
             .allocator = allocator,
             .uid = uid,
             .size = @Vector(2, u32){ board_width, board_height },
+            .clues_completed = std.atomic.Value(u32).init(completed_clues),
             .quads = quads,
             .clues = clues,
         };
@@ -690,6 +713,56 @@ pub fn background_worker() void {
                 std.log.err("Failed to write board cache to S3: {any}", .{err});
             };
         }
+        failed_gen: {
+            if(std.time.timestamp() - state.generate_map_timestamp >= MAP_GENERATION_TIME) {
+                std.log.info("Generating crossword map...", .{});
+                state.generate_map_timestamp = std.time.timestamp();
+                var img_buf = state.gpa.alloc(u8, state.board.size[0] * state.board.size[1] * 4) catch |err| {
+                    std.log.err("Failed to allocate image buffer: {any}", .{err});
+                    break :failed_gen;
+                };
+                defer state.gpa.free(img_buf);
+                const board = &state.board;
+                for(board.quads) |quad| {
+                    const pos = @Vector(2, u32){quad.x, quad.y} * @Vector(2, u32){GRID_SIZE, GRID_SIZE};
+                    for (quad.input, 0..) |cell, cell_index| {
+                        const offset_pos = @Vector(2, u32){@as(u32,@intCast(cell_index)) % GRID_SIZE, @as(u32,@intCast(cell_index)) / GRID_SIZE}; 
+                        const cell_pos = pos + offset_pos;
+                        const pix_start = (cell_pos[1] * board.size[0] + cell_pos[0]) * 4;
+                        var pix_color = img_buf[pix_start..pix_start + 4];
+                        if(cell.lock == 1) {
+                            pix_color[0] = 0;
+                            pix_color[1] = 155;
+                            pix_color[2] = 0;
+                        } else {
+                            switch (cell.value) {
+                                .black => |_| {
+                                    pix_color[0] = 0;
+                                    pix_color[1] = 0;
+                                    pix_color[2] = 0;
+                                },
+                                else => {
+                                    pix_color[0] = 255;
+                                    pix_color[1] = 255;
+                                    pix_color[2] = 255;
+                                },
+                            }
+                        }
+                    }
+                }
+                if(stb_writer.stbi_write_png(
+                    "dist/map.png",
+                    @intCast(board.size[0]),
+                    @intCast(board.size[1]),
+                    4,
+                    img_buf.ptr,
+                    @intCast(4 * board.size[0])
+                ) <= 0) {
+                    std.log.err("Failed to save map image", .{});
+                }
+                
+            }
+        }
         std.time.sleep(std.time.ns_per_ms * 200);
     }
     game.state.board.write_cache_s3(
@@ -712,6 +785,7 @@ pub const State = struct {
     clients: ClientArrayList,
 
     backup_timestamp: i64,
+    generate_map_timestamp: i64,
     running: std.atomic.Value(bool),
 
     crossword_map: []const u8,

@@ -7,7 +7,13 @@ const net = @import("net.zig");
 
 pub const WebsocketHandler = WebSockets.Handler(Client);
 
-pub const MsgID = enum(u8) { ready = 0, set_view = 1, sync_block = 2, input_or_sync_cell = 3, unknown };
+pub const MsgID = enum(u8) { 
+    ready = 0, 
+    set_view = 1, 
+    sync_block = 2, 
+    input_or_sync_cell = 3,
+    ping = 4,
+    unknown };
 
 pub const Client = @This();
 
@@ -19,6 +25,8 @@ cell_rect: rect.Rect, // The region of the board that the client is currently vi
 quad_rect: rect.Rect, // The quad region that the client is subscribed to
 ready: bool,
 allocator: std.mem.Allocator,
+
+last_ping: i64 = 0, // Timestamp of the last ping sent from the client 
 pub fn upgrade(allocator: std.mem.Allocator, r: zap.Request) !*Client {
     game.state.client_lock.lock();
     defer game.state.client_lock.unlock();
@@ -152,6 +160,11 @@ fn on_message_websocket(
                     }
                 }
             },
+            .ping => {
+                const board = &game.state.board;
+                c.last_ping = std.time.milliTimestamp();
+                try net.msg_pong(c, board);
+            },
             .input_or_sync_cell => {
                 const board = &game.state.board;
                 const input = try net.msg_parse_input(reader.any());
@@ -193,6 +206,7 @@ fn on_message_websocket(
                                 }
                             }
                             {
+                                _ = board.clues_completed.fetchAdd(1, .seq_cst); 
                                 var clue_pos_iter = clue_rect.iterator();
                                 while (clue_pos_iter.next()) |clue_pos| {
                                     if(game.to_quad_index(game.map_to_quad_pos(clue_pos), game.to_quad_size(board.size))) |clue_quad_idx| {
@@ -232,9 +246,11 @@ fn on_message_websocket(
 
 fn on_open_websocket(client: ?*Client, handle: WebSockets.WsHandle) !void {
     if (client) |c| {
+        const board = &game.state.board;
         c.handle = handle;
         c.ready = true;
         try msg_ready(c);
+        try net.msg_pong(c, board);
         std.log.info("WebSocket connection opened for client: {s}", .{c.channel});
     } else {
         std.log.warn("WebSocket connection opened without a client context", .{});
