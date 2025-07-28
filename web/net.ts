@@ -231,7 +231,7 @@ export function netParsePong(view: DataView, offset: number) {
   offset += 4;
   return {
     percentage: percentage,
-  }
+  };
 }
 
 export function netParseSyncChunk(
