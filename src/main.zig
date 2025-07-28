@@ -4,6 +4,7 @@ const WebSockets = zap.WebSockets;
 const client = @import("client.zig");
 const game = @import("game.zig");
 const rect = @import("rect.zig");
+const aws = @import("aws");
 
 fn on_upgrade(r: zap.Request, target_protocol: []const u8) !void {
     // make sure we're talking the right protocol
@@ -14,7 +15,7 @@ fn on_upgrade(r: zap.Request, target_protocol: []const u8) !void {
         return;
     }
 
-    _ = client.Client.upgrade(game.state.allocator, r) catch |e| {
+    _ = client.Client.upgrade(game.state.gpa, r) catch |e| {
         std.log.err("Error upgrading client: {any}", .{e});
         return;
     };
@@ -127,73 +128,87 @@ fn load_board(allocator: std.mem.Allocator, path: []const u8, board_width: *u32,
     }
 }
 
-const Config = struct {
-    allocator: std.mem.Allocator,
-    port: u16,
-    crossword_map: []const u8,
-    threads: i16,
-    workers: i16,
+//const Config = struct {
+//    allocator: std.mem.Allocator,
+//    port: u16,
+//    crossword_map: []const u8,
+//    threads: i16,
+//    workers: i16,
+//
+//    fn __parse_env_integer(comptime T: type, value: []const u8, env_name: []const u8) !T {
+//        return std.fmt.parseInt(T, value, 10) catch |err| {
+//            std.log.err("Error: Invalid {s} value '{s}': {any}", .{ env_name, value, err });
+//            return err;
+//        };
+//    }
+//
+//    fn __get_env_var(allocator: std.mem.Allocator, key: []const u8) !?[]const u8 {
+//        return std.process.getEnvVarOwned(allocator, key) catch |err| switch (err) {
+//            error.EnvironmentVariableNotFound => return null,
+//            else => return err,
+//        };
+//    }
+//
+//
+//    fn deinit(self: *Config) void {
+//        self.allocator.free(self.crossword_map);
+//    }
+//    fn load_config_from_env(allocator: std.mem.Allocator) !Config {
+//        var port: u16 = 3010; 
+//        var crossword_map: []const u8 = undefined;
+//        var threads: i16 = 1;
+//        var workers: i16 = 1;
+//
+//        if(try __get_env_var(allocator, "PORT")) | port_str| {
+//            port = try __parse_env_integer(u16, port_str, "PORT");
+//            defer allocator.free(port_str);
+//        } else {
+//            port = 3010;
+//        }
+//
+//        if(try __get_env_var(allocator, "CROSSWORD_MAP")) |str| {
+//            crossword_map = str;
+//        } else {
+//            crossword_map = try allocator.dupe(u8,"./crossword.map");
+//        }
+//
+//        if(try __get_env_var(allocator, "THREADS")) |thread_str| {
+//            threads = try __parse_env_integer(i16, thread_str, "THREADS");
+//            defer allocator.free(thread_str);
+//        } else {
+//            threads = 1;
+//        }
+//
+//        if(try __get_env_var(allocator, "WORKERS")) |thread_str| {
+//            workers = try __parse_env_integer(i16, thread_str, "WORKERS");
+//            defer allocator.free(thread_str);
+//        } else {
+//            workers = 1;
+//        }
+//
+//        return .{
+//            .allocator = allocator,
+//            .port = port,
+//            .crossword_map = crossword_map,
+//            .threads = threads,
+//            .workers = workers,
+//        };
+//    }
+//};
 
-    fn __parse_env_integer(comptime T: type, value: []const u8, env_name: []const u8) !T {
-        return std.fmt.parseInt(T, value, 10) catch |err| {
-            std.log.err("Error: Invalid {s} value '{s}': {any}", .{ env_name, value, err });
-            return err;
-        };
-    }
+fn __parse_env_integer(comptime T: type, value: []const u8, env_name: []const u8) !T {
+    return std.fmt.parseInt(T, value, 10) catch |err| {
+        std.log.err("Error: Invalid {s} value '{s}': {any}", .{ env_name, value, err });
+        return err;
+    };
+}
 
-    fn __get_env_var(allocator: std.mem.Allocator, key: []const u8) !?[]const u8 {
-        return std.process.getEnvVarOwned(allocator, key) catch |err| switch (err) {
-            error.EnvironmentVariableNotFound => return null,
-            else => return err,
-        };
-    }
-
-
-    fn deinit(self: *Config) void {
-        self.allocator.free(self.crossword_map);
-    }
-    fn load_config_from_env(allocator: std.mem.Allocator) !Config {
-        var port: u16 = 3010; 
-        var crossword_map: []const u8 = undefined;
-        var threads: i16 = 1;
-        var workers: i16 = 1;
-
-        if(try __get_env_var(allocator, "PORT")) | port_str| {
-            port = try __parse_env_integer(u16, port_str, "PORT");
-            defer allocator.free(port_str);
-        } else {
-            port = 3010;
-        }
-
-        if(try __get_env_var(allocator, "CROSSWORD_MAP")) |str| {
-            crossword_map = str;
-        } else {
-            crossword_map = try allocator.dupe(u8,"./crossword.map");
-        }
-
-        if(try __get_env_var(allocator, "THREADS")) |thread_str| {
-            threads = try __parse_env_integer(i16, thread_str, "THREADS");
-            defer allocator.free(thread_str);
-        } else {
-            threads = 1;
-        }
-
-        if(try __get_env_var(allocator, "WORKERS")) |thread_str| {
-            workers = try __parse_env_integer(i16, thread_str, "WORKERS");
-            defer allocator.free(thread_str);
-        } else {
-            workers = 1;
-        }
-
-        return .{
-            .allocator = allocator,
-            .port = port,
-            .crossword_map = crossword_map,
-            .threads = threads,
-            .workers = workers,
-        };
-    }
-};
+fn __get_env_var(allocator: std.mem.Allocator, key: []const u8) !?[]const u8 {
+    return std.process.getEnvVarOwned(allocator, key) catch |err| switch (err) {
+        error.EnvironmentVariableNotFound => return null,
+        else => return err,
+    };
+}
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{
@@ -201,19 +216,113 @@ pub fn main() !void {
     }){};
     const allocator = gpa.allocator();
 
-    var config = try Config.load_config_from_env(allocator); 
-    defer config.deinit();
+    var port: u16 = 3010; 
+    var crossword_map: []const u8 = undefined;
+    var crossword_cache: []const u8 = undefined;
+    var threads: i16 = 1;
+    var workers: i16 = 1;
+    var bucket: []const u8  = undefined;
+    var region: []const u8  = undefined;
+    if(try __get_env_var(allocator, "PORT")) | port_str| {
+        port = try __parse_env_integer(u16, port_str, "PORT");
+        defer allocator.free(port_str);
+    } else {
+        port = 3010;
+    }
 
-    var clues = game.ClueList.init(allocator);
-    var board_width: u32 = 0;
-    var board_height: u32 = 0;
-    try load_board(allocator, config.crossword_map, &board_width, &board_height, &clues);
-    game.state = try game.State.init(allocator, board_width, board_height, clues);
-    defer game.state.deinit();
+    if(try __get_env_var(allocator, "CROSSWORD_MAP")) |str| {
+        crossword_map = str;
+    } else {
+        crossword_map = "crossword.map";
+    }
+    
+    if(try __get_env_var(allocator, "CROSSWORD_CACHE")) |str| {
+        crossword_cache = str;
+    } else {
+        crossword_cache  = "crossword.cache";
+    }
 
+    if(try __get_env_var(allocator, "THREADS")) |thread_str| {
+        threads = try __parse_env_integer(i16, thread_str, "THREADS");
+        defer allocator.free(thread_str);
+    } else {
+        threads = 1;
+    }
+
+    if(try __get_env_var(allocator, "WORKERS")) |thread_str| {
+        workers = try __parse_env_integer(i16, thread_str, "WORKERS");
+        defer allocator.free(thread_str);
+    } else {
+        workers = 1;
+    }
+    
+    if(try __get_env_var(allocator, "AWS_REGION")) |region_str| {
+        region = region_str;
+    } else {
+       region = "us-west-2"; 
+    }
+    
+    if(try __get_env_var(allocator, "AWS_BUCKET")) |bucket_str| {
+        bucket = bucket_str;
+    } else {
+        bucket = "crossword";
+    }
+
+    if(try __get_env_var(allocator, "AWS_ENDPOINT_URL")) |str| {
+        std.debug.print("AWS_ENDPOINT_URL: {s}\n", .{str});
+    }
+
+    var aws_client = aws.Client.init(allocator,.{});
+    defer aws_client.deinit();
+        
+    game.state = .{
+        .gpa = allocator,
+        .clients = std.ArrayList(*client.Client).init(allocator),
+        .client_id = 0,
+        .backup_timestamp = 0,
+        .generate_map_timestamp = 0,
+        .running = std.atomic.Value(bool).init(true),
+
+        .crossword_cache = crossword_cache,
+        .crossword_map = crossword_map,
+
+        .bucket = bucket,
+        .region = region,
+        .aws_client = aws_client,
+   
+        .board = undefined,
+    };
+
+    // load the crossword map 
+    {
+        const map_resp = try aws.Request(aws.services.s3.get_object).call(.{
+            .bucket = bucket,
+            .key = crossword_map,
+        }, .{
+            .region = region,
+            .client = aws_client,
+        });
+        defer map_resp.deinit();
+        var stream = std.io.fixedBufferStream(map_resp.response.body orelse "");
+        var reader = stream.reader();
+
+        const cache_resp = try aws.Request(aws.services.s3.get_object).call(.{
+            .bucket = bucket,
+            .key = crossword_cache,
+        }, .{
+            .region = region,
+            .client = aws_client,
+        });
+        defer cache_resp.deinit();
+        var cache_stream = std.io.fixedBufferStream(cache_resp.response.body orelse "");
+        var cache_reader = cache_stream.reader();
+        game.state.board = try game.Board.load(allocator, reader.any(),cache_reader.any());
+    }
+  
+    var background_worker = try std.Thread.spawn(.{}, game.background_worker, .{});
     var listener = zap.HttpListener.init(
         .{
-            .port = config.port,
+            .port = port,
             .on_upgrade = on_upgrade,
             .on_request = on_request,
             .max_clients = null,
@@ -225,18 +334,20 @@ pub fn main() !void {
     try listener.listen();
     std.log.info("", .{});
     std.log.info("Server configuration:", .{});
-    std.log.info("  Port: {d}", .{config.port});
-    std.log.info("  Crossword map: {s}", .{config.crossword_map});
-    std.log.info("  Threads: {d}, Workers: {d}", .{ config.threads, config.workers });
+    std.log.info("  Port: {d}", .{port});
+    std.log.info("  Crossword map: {s}", .{crossword_map});
+    std.log.info("  Threads: {d}, Workers: {d}", .{ threads, workers });
     std.log.info("", .{});
-    std.log.info("Connect with browser to http://localhost:{d}.", .{config.port});
-    std.log.info("Connect to websocket on ws://localhost:{d}.", .{config.port});
+    std.log.info("Connect with browser to http://localhost:{d}.", .{port});
+    std.log.info("Connect to websocket on ws://localhost:{d}.", .{port});
     std.log.info("Terminate with CTRL+C", .{});
 
     zap.start(.{
-        .threads = config.threads,
-        .workers = config.workers,
+        .threads = threads,
+        .workers = workers,
     });
+    game.state.running.store(false, .monotonic);
+    background_worker.join(); 
 }
 
 const expect = std.testing.expect;

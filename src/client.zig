@@ -7,7 +7,13 @@ const net = @import("net.zig");
 
 pub const WebsocketHandler = WebSockets.Handler(Client);
 
-pub const MsgID = enum(u8) { ready = 0, set_view = 1, sync_block = 2, input_or_sync_cell = 3, unknown };
+pub const MsgID = enum(u8) { 
+    ready = 0, 
+    set_view = 1, 
+    sync_block = 2, 
+    input_or_sync_cell = 3,
+    ping = 4,
+    unknown };
 
 pub const Client = @This();
 
@@ -19,10 +25,12 @@ cell_rect: rect.Rect, // The region of the board that the client is currently vi
 quad_rect: rect.Rect, // The quad region that the client is subscribed to
 ready: bool,
 allocator: std.mem.Allocator,
+
+last_ping: i64 = 0, // Timestamp of the last ping sent from the client 
 pub fn upgrade(allocator: std.mem.Allocator, r: zap.Request) !*Client {
     game.state.client_lock.lock();
     defer game.state.client_lock.unlock();
-    const client = try game.state.allocator.create(Client);
+    const client = try game.state.gpa.create(Client);
     errdefer client.deinit();
     const client_channel = try std.fmt.allocPrint(allocator, "c-{any}", .{game.state.client_id});
     game.state.client_id += 1;
@@ -61,7 +69,7 @@ fn on_close_websocket(client: ?*Client, _: isize) !void {
             }
         }
         c.deinit();
-        game.state.allocator.destroy(c);
+        game.state.gpa.destroy(c);
     }
 }
 
@@ -136,6 +144,7 @@ fn on_message_websocket(
         std.log.debug("on_message: {any} client {s}", .{ msg_id, c.channel });
         switch (msg_id) {
             .set_view => {
+                const board = &game.state.board;
                 c.cell_rect = try msg_parse_view(reader.any());
                 const quad_last_rect = c.quad_rect;
                 c.quad_rect = game.map_to_quad(c.cell_rect);
@@ -144,74 +153,88 @@ fn on_message_websocket(
                 while (iter.next()) |pos| {
                     if (rect.contains_point(quad_last_rect, pos))
                         continue;
-                    if (game.state.board.get_quad(pos)) |quad| {
-                        quad.lock.lockShared();
-                        defer quad.lock.unlockShared();
-                        try net.msg_sync_block(c, quad); // Sync the first block of the quad
+                    if(game.to_quad_index(pos, game.to_quad_size(board.size))) |update_quad_idx| {
+                        board.quads[update_quad_idx].lock.lockShared();
+                        defer board.quads[update_quad_idx].lock.unlockShared();
+                        try net.msg_sync_block(c, &board.quads[update_quad_idx]); // Sync the first block of the quad
                     }
                 }
             },
+            .ping => {
+                const board = &game.state.board;
+                c.last_ping = std.time.milliTimestamp();
+                try net.msg_pong(c, board);
+            },
             .input_or_sync_cell => {
+                const board = &game.state.board;
                 const input = try net.msg_parse_input(reader.any());
-                if (game.state.board.get_quad_from_cell_pos(input.pos)) |quad| {
-                    const local_pos = quad.to_local(input.pos);
+                if(game.to_quad_index(game.map_to_quad_pos(input.pos), game.to_quad_size(board.size))) |update_quad_idx| {
                     {
-                        quad.lock.lock();
-                        defer quad.lock.unlock();
-                        var cell = quad.get_cell(local_pos);
-                        if (cell.lock == 1) {
+                        board.quads[update_quad_idx].client_lock.lock();
+                        defer board.quads[update_quad_idx].client_lock.unlock();
+                        var cell = &board.quads[update_quad_idx].input[game.to_cell_index(input.pos)];
+                        if(cell.lock == 1) {
                             return; // Cell is locked, ignore the input
                         }
                         cell.value = input.input;
                     }
-                    var dirty_cells = std.ArrayList(@Vector(2, u32)).init(game.state.allocator);
+                    var dirty_cells = std.ArrayList(@Vector(2, u32)).init(game.state.gpa);
                     defer dirty_cells.deinit();
                     try dirty_cells.append(input.pos);
                     {
-                        var clues: [6]*game.Clue = undefined;
-                        var len: usize = 0;
-                        quad.get_crossing_clues(input.pos, &clues, &len);
-                        next_clue: for (clues[0..len]) |cl| {
+                        var tmp: [@sizeOf(*game.Clue) * 6]u8 = undefined;
+                        var fba = std.heap.FixedBufferAllocator.init(&tmp);
+                        var clues = try std.ArrayList(*game.Clue).initCapacity(fba.allocator(), 6);
+                        try board.quads[update_quad_idx].get_crossing_clues(input.pos, &clues);
+                        next_clue: for (clues.items) |cl| {
                             const clue_rect = cl.to_rect();
                             const clue_quad_rect = game.map_to_quad(clue_rect);
                             game.state.board.lock_quads(clue_quad_rect);
                             defer game.state.board.unlock_quads(clue_quad_rect);
                             {
-                                var clue_itr = game.DefaultQuadDefault.init({}, &game.state.board, clue_rect);
-                                defer clue_itr.deinit();
+                                var clue_pos_iter = clue_rect.iterator();
                                 var idx: usize = 0;
-                                while (clue_itr.next()) |qq| {
-                                    if (qq.q.get_cell(qq.p).value != cl.word[idx]) {
-                                        continue :next_clue;
+                                while (clue_pos_iter.next()) |clue_pos|: (idx += 1) {
+                                    if(game.to_quad_index(game.map_to_quad_pos(clue_pos), game.to_quad_size(board.size))) |clue_quad_idx| {
+                                        if(board.quads[clue_quad_idx].input[game.to_cell_index(clue_pos)].value != cl.word[idx]) {
+                                            continue :next_clue; 
+                                        }
+                                    } else {
+                                        std.log.warn("Clue position {any} is out of bounds for the board size {any}", .{clue_pos, board.size});
+                                        continue :next_clue; 
                                     }
-                                    idx += 1;
                                 }
                             }
                             {
-                                var clue_itr = game.DefaultQuadDefault.init({}, &game.state.board, clue_rect);
-                                defer clue_itr.deinit();
-                                while (clue_itr.next()) |qq| {
-                                    qq.q.get_cell(qq.p).lock = 1;
-                                    if (!contains_simd2(dirty_cells.items, qq.p)) {
-                                        try dirty_cells.append(qq.q.to_global(qq.p));
-                                    }
+                                _ = board.clues_completed.fetchAdd(1, .seq_cst); 
+                                var clue_pos_iter = clue_rect.iterator();
+                                while (clue_pos_iter.next()) |clue_pos| {
+                                    if(game.to_quad_index(game.map_to_quad_pos(clue_pos), game.to_quad_size(board.size))) |clue_quad_idx| {
+                                        var cell = &board.quads[clue_quad_idx].input[game.to_cell_index(clue_pos)];
+                                        cell.lock = 1;
+                                        if (!contains_simd2(dirty_cells.items, clue_pos)) {
+                                            try dirty_cells.append(clue_pos);
+                                        }
+                                    } else unreachable;
                                 }
                             }
                         }
-                    }
-                    for (dirty_cells.items) |dirty_pos| {
-                        if (game.state.board.get_quad_from_cell_pos(dirty_pos)) |quad2| {
-                            quad2.client_lock.lockShared();
-                            defer quad2.client_lock.unlockShared();
-                            quad2.lock.lockShared();
-                            defer quad2.lock.unlockShared();
-                            for (quad2.clients.items) |cl| {
-                                net.msg_sync_cell(cl, dirty_pos, quad2.get_cell(quad2.to_local(dirty_pos)).*) catch |err| {
-                                    std.log.err("Failed to sync cell to client: {any}", .{err});
-                                };
-                            }
+                        for (dirty_cells.items) |dirty_pos| {
+                            if(game.to_quad_index(game.map_to_quad_pos(dirty_pos), game.to_quad_size(board.size))) |dirty_quad_idx| {
+                                board.quads[dirty_quad_idx].client_lock.lockShared();
+                                defer board.quads[dirty_quad_idx].client_lock.unlockShared();
+                                board.quads[dirty_quad_idx].lock.lockShared();
+                                defer board.quads[dirty_quad_idx].lock.unlockShared();
+                                for (board.quads[dirty_quad_idx].clients.items) |cl| {
+                                    net.msg_sync_cell(cl, dirty_pos, board.quads[dirty_quad_idx].input[game.to_cell_index(dirty_pos)]) catch |err| {
+                                        std.log.err("Failed to sync cell to client: {any}", .{err});
+                                    };
+                                }
+                            } else unreachable;
                         }
+
                     }
+
                 }
             },
             else => {
@@ -223,9 +246,11 @@ fn on_message_websocket(
 
 fn on_open_websocket(client: ?*Client, handle: WebSockets.WsHandle) !void {
     if (client) |c| {
+        const board = &game.state.board;
         c.handle = handle;
         c.ready = true;
         try msg_ready(c);
+        try net.msg_pong(c, board);
         std.log.info("WebSocket connection opened for client: {s}", .{c.channel});
     } else {
         std.log.warn("WebSocket connection opened without a client context", .{});

@@ -26,7 +26,7 @@ RUN npm install
 RUN npm run build
 
 # Build the application
-RUN zig build
+RUN zig build --release=safe -Dtarget=x86_64-linux 
 
 # Final stage - minimal runtime image
 FROM debian:latest

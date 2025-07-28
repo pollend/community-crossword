@@ -38,6 +38,15 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    exe_mod.addIncludePath(b.path("src"));
+
+    const release_flags = [_][]const u8{};
+    const debug_flags = [_][]const u8{"-o2"};
+    const flags = if (optimize == .Debug) &debug_flags else &release_flags;
+    exe_mod.addCSourceFile(.{
+       .file =  b.path("src/stb_image_write_impl.c"),
+       .flags = flags
+    });
 
     // Modules can depend on one another using the `std.Build.Module.addImport` function.
     // This is what allows Zig source code to use `@import("foo")` where 'foo' is not a
@@ -49,8 +58,13 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .openssl = false, // set to true to enable TLS support
     });
-
     exe_mod.addImport("zap", zap.module("zap"));
+    
+    const aws = b.dependency("aws", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    exe_mod.addImport("aws", aws.module("aws"));
 
     // Now, we will create a static library based on the module we created above.
     // This creates a `std.Build.Step.Compile`, which is the build step responsible

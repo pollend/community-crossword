@@ -5,11 +5,12 @@ const set = @import("ziglangSet");
 const csv = @import("csv");
 const assert = std.debug.assert;
 const word_dfs = @import("word_dfs.zig");
-pub const WIDTH = 992;
-pub const HEIGHT = 992;
+pub const WIDTH = 512;
+pub const HEIGHT = 512;
 //pub const WIDTH = 8;
 //pub const HEIGHT = 8;
 
+pub const MAGIC_NUMBER: u32 = 0x1F9F1E9f; 
 pub const BLOCK_CHAR = '@'; // Character used to represent a blocked cell
 
 pub const RemoveCell = struct {
@@ -835,7 +836,9 @@ pub fn main() !void {
     var file = try std.fs.cwd().createFile("crossword.map", .{ .truncate = true });
     defer file.close();
     var writer = file.writer();
-
+    try writer.writeInt(u32, MAGIC_NUMBER, .little);
+    try writer.writeByte(0);
+    try writer.writeInt(u32, random.int(u32), .little);
     try writer.writeInt(u32, WIDTH, .little);
     try writer.writeInt(u32, HEIGHT, .little);
     if(board.next) |first_crossing| {

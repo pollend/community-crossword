@@ -18,7 +18,9 @@
     netParseSyncChunk,
     netSendCell,
     netSendViewRect,
+    netSendPing,
     Value,
+    netParsePong,
   } from "./net";
   import { Quad } from "./quad";
   import { graphicDrawRect } from "./graphic";
@@ -36,6 +38,7 @@
   let dragStartPosition = new Point(0, 0);
   let stageDragPosition = new Point(0, 0);
   let quads: Quad[] = [];
+  let progress: number = $state(0);
 
   let highlightSlotsVertical: number[] = $state([]);
   let highlightSlotHorizontal: number[] = $state([]);
@@ -163,7 +166,6 @@
     return quad.cells[cellY * GRID_SIZE + cellX];
   }
 
-
   function getViewRectCells(): Rectangle {
     const view = getViewRect();
     const x = Math.floor(view.x / GRID_CELL_PX);
@@ -229,6 +231,10 @@
         case MessageID.ready: {
           const readyPkt = netParseReady(view, offset);
           boardSize.set(readyPkt.board_width, readyPkt.board_height);
+          topLeftPosition.set(
+            (boardSize.x * GRID_CELL_PX) * Math.random(),
+            (boardSize.y * GRID_CELL_PX) * Math.random(),
+          );
           syncViewThrottle.trigger();
           break;
         }
@@ -258,10 +264,26 @@
           refreshQuads.trigger();
           break;
         }
+        case MessageID.ping: {
+          const payload = netParsePong(view, offset);
+          progress = payload.percentage * 100.0; 
+          break;
+        }
       }
     };
+    let pingTimeout: number | undefined = undefined;
+    pingTimeout = setTimeout(() => {
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        netSendPing(socket);
+      }
+    }, 5000);
 
-    socket.onclose = function () {};
+    socket.onclose = function () {
+      if (pingTimeout) {
+        clearTimeout(pingTimeout);
+        pingTimeout = undefined;
+      }
+    };
 
     socket.onopen = function () {
       //netSendViewRect(socket, 0, 0, app.screen.width, app.screen.height);
@@ -556,6 +578,24 @@
 
 <div class="container mx-auto flex sm:w-full">
   <div class="flex-4 flex flex-col">
+    <div class="mb-3 px-4">
+      <div class="flex justify-between items-center mb-2">
+        <span class="text-sm font-medium text-gray-700">Puzzle Progress</span>
+        <span class="text-sm font-medium text-gray-700">{Math.round(progress)}%</span>
+      </div>
+      <div class="w-full bg-gray-200 rounded-full h-3">
+        <div 
+          class="bg-green-500 h-3 rounded-full transition-all duration-300 ease-out"
+          style="width: {progress}%"
+        ></div>
+      </div>
+      {#if progress === 100}
+        <div class="text-center mt-2 text-green-600 font-bold animate-pulse">
+          🎉 Puzzle Complete! 🎉
+        </div>
+      {/if}
+    </div>
+    
     <div class="bg-sky-300 items-center justify-center text-black text-center mb-3 p-4">
       {#if selectionText !== ""}
         {selectionText}
@@ -563,6 +603,8 @@
         ???
       {/if}
     </div>
+    
+  
     <div class="aspect-square overflow-hidden border-black border-2" bind:this={frame}></div>
   </div>
   <div class="flex-3 text-black">
