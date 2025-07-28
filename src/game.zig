@@ -18,7 +18,7 @@ pub const assert = std.debug.assert;
 pub const GRID_SIZE: u32 = 16;
 pub const GRID_LEN: u32 = GRID_SIZE * GRID_SIZE;
 pub const BACKUP_TIME_STAMP: i64 = std.time.s_per_min * 30;
-pub const MAP_GENERATION_TIME: i64 = 5;//std.time.s_per_min * 60; // 5 minutes
+pub const MAP_GENERATION_TIME: i64 = std.time.s_per_min * 60; 
 
 pub const MAP_MAGIC_NUMBER: u32 = 0x1F9F1E9f; 
 pub const MAP_CACHE_MAGIC_NUMBER: u32 = 0x1F9F1E9c; // Different magic number for cache
