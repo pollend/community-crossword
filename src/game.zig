@@ -4,6 +4,7 @@ const client = @import("client.zig");
 const WebSockets = zap.WebSockets;
 const game = @import("game.zig");
 const rect = @import("rect.zig");
+const aws = @import("aws");
 const WebsocketHandler = WebSockets.Handler(client.Client);
 
 pub const ClientArrayList = std.ArrayList(*client.Client);
@@ -12,6 +13,10 @@ pub const assert = std.debug.assert;
 
 pub const GRID_SIZE: u32 = 16;
 pub const GRID_LEN: u32 = GRID_SIZE * GRID_SIZE;
+pub const BACKUP_TIME_STAMP: i64 = std.time.s_per_min * 2;
+
+pub const MAP_MAGIC_NUMBER: u32 = 0x1F9F1E9f; 
+pub const MAP_CACHE_MAGIC_NUMBER: u32 = 0x1F9F1E9c; // Different magic number for cache
 
 pub const GRID_SZ: @Vector(2, u32) = @Vector(2, u32){ GRID_SIZE, GRID_SIZE };
 pub const Value = enum(u7) {
@@ -83,6 +88,13 @@ pub fn map_to_quad(rec: rect.Rect) rect.Rect {
 pub const Cell = packed struct {
     value: Value,
     lock: u1,
+
+    pub fn decode(value: u8) Cell {
+        return .{
+            .value = @enumFromInt(@as(u8,@intCast(value & 0x7F))),
+            .lock = @intFromBool((value & (1 << 7)) != 0),
+        };
+    }
 
     pub fn encode(self: *const Cell) u8 {
         var value: u8 = @intFromEnum(self.value);
@@ -218,15 +230,6 @@ pub const Quad = struct {
         };
     }
 
-    pub fn quad_rect_global(self: *Quad) rect.Rect {
-        return rect.create(
-            self.x * GRID_SIZE,
-            self.y * GRID_SIZE,
-            GRID_SIZE,
-            GRID_SIZE,
-        );
-    }
-
     pub fn deinit(self: *Quad) void {
         self.lock.lock();
         defer self.lock.unlock();
@@ -236,6 +239,7 @@ pub const Quad = struct {
 
 pub const Board = struct {
     size: @Vector(2, u32),
+    uid: u32 = 0, // Unique ID for the board
     quads: []Quad,
     clues: ClueList,
     allocator: std.mem.Allocator,
@@ -248,15 +252,115 @@ pub const Board = struct {
         self.allocator.free(self.quads);
     }
 
-    pub fn load_from_reader(
+    pub fn write_cache_s3(
+        self: *Board,
         allocator: std.mem.Allocator,
-        reader: std.io.AnyReader,
+        bucket: []const u8,
+        key: []const u8,
+        options: aws.Options
+    ) !void {
+        var buffer = std.ArrayList(u8).initCapacity(allocator, self.size[0] * self.size[1] * GRID_LEN) catch |err| {
+            std.log.err("Failed to create backup buffer: {any}", .{err});
+            return err;
+        };
+        defer buffer.deinit();
+        var writer = buffer.writer();
+        self.write_cache_writer(writer.any()) catch |err| {
+            std.log.err("Failed to write board cache: {any}", .{err});
+            return err;
+        };
+        const result = aws.Request(aws.services.s3.put_object).call(.{
+            .bucket = bucket,
+            .key = key,
+            .content_type = "application/octet-stream",
+            .body = buffer.items,
+            .storage_class = "STANDARD",
+        }, options) catch |err| {
+            std.log.err("Failed to upload backup to S3: {any}", .{err});
+            return err;
+        };
+        defer result.deinit();
+    }
+
+    pub fn write_cache_writer(
+        self: *Board,
+        writer: std.io.AnyWriter,
+    ) !void {
+        writer.writeInt(u32, MAP_CACHE_MAGIC_NUMBER, .little) catch |e| {
+            std.log.err("Failed to write map cache file: {any}", .{e});
+            return e;
+        };
+
+        writer.writeByte(0) catch |e| {
+            std.log.err("Failed to write map file: {any}", .{e});
+            return e;
+        }; // version byte
+        
+        writer.writeInt(u32, self.uid, .little) catch |e| {
+            std.log.err("Failed to write map file: {any}", .{e});
+            return e;
+        };
+        writer.writeInt(u32, self.size[0], .little) catch |e| {
+            std.log.err("Failed to write board size to backup buffer: {any}", .{e});
+            return e;    
+        };
+        writer.writeInt(u32, self.size[1], .little) catch |e| {
+            std.log.err("Failed to write board size to backup buffer: {any}", .{e});
+            return e;    
+        };
+        
+        const quad_whole_map = game.map_to_quad(
+            rect.create(0, 0, self.size[0], self.size[1]));
+        var iter = quad_whole_map.iterator();
+        self.lock_quads_shared(quad_whole_map);
+        defer self.unlock_quads_shared(quad_whole_map);
+        const quad_size = to_quad_size(self.size);
+        var tmp: [GRID_LEN]u8 = undefined;
+        while (iter.next()) |quad_pos| {
+            if(to_quad_index(quad_pos, quad_size)) |idx| {
+                var i: usize = 0; 
+                while (i < game.GRID_LEN) : (i += 1) {
+                    tmp[i] = state.board.quads[idx].input[i].encode();
+                }
+                writer.writeAll(&tmp) catch |err| {
+                    std.log.err("Failed to write quad data to backup buffer: {any}", .{err});
+                    continue;
+                };
+            } else {
+                unreachable;
+            }
+        }
+    }
+
+    pub fn load(
+        allocator: std.mem.Allocator,
+        map_reader: std.io.AnyReader,
+        cache_reader : ?std.io.AnyReader
     ) !Board {
-        const board_width = reader.readInt(u32, .little) catch |e| {
+        const magic = map_reader.readInt(u32, .little) catch |e| {
             std.log.err("Failed to read map file: {any}", .{e});
             return e;
         };
-        const board_height = reader.readInt(u32, .little) catch |e| {
+
+        if(magic != MAP_MAGIC_NUMBER) {
+            std.log.err("Invalid map file magic number: expected {x}, got {x}", .{MAP_MAGIC_NUMBER, magic});
+            return error.InvalidMagicNumber;
+        }
+
+        _ = map_reader.readByte() catch |e| {
+            std.log.err("Failed to read map file: {any}", .{e});
+            return e;
+        };
+        const uid = map_reader.readInt(u32, .little) catch |e| {
+            std.log.err("Failed to read map file: {any}", .{e});
+            return e;
+        };
+
+        const board_width = map_reader.readInt(u32, .little) catch |e| {
+            std.log.err("Failed to read map file: {any}", .{e});
+            return e;
+        };
+        const board_height = map_reader.readInt(u32, .little) catch |e| {
             std.log.err("Failed to read map file: {any}", .{e});
             return e;
         };
@@ -275,21 +379,21 @@ pub const Board = struct {
             defer buffer.deinit();
             while (true) {
                 buffer.clearRetainingCapacity();
-                const x = reader.readInt(u32, .little) catch |e| switch (e) {
+                const x = map_reader.readInt(u32, .little) catch |e| switch (e) {
                     error.EndOfStream => break,
                     else => |err| {
                         std.log.err("Failed to read map file: {any}", .{err});
                         return err;
                     },
                 };
-                const y = reader.readInt(u32, .little) catch |e| switch (e) {
+                const y = map_reader.readInt(u32, .little) catch |e| switch (e) {
                     error.EndOfStream => break,
                     else => |err| {
                         std.log.err("Failed to read map file: {any}", .{err});
                         return err;
                     },
                 };
-                const dir = reader.readInt(u8, .little) catch |e| switch (e) {
+                const dir = map_reader.readInt(u8, .little) catch |e| switch (e) {
                     error.EndOfStream => break,
                     else => |err| {
                         std.log.err("Failed to read map file: {any}", .{err});
@@ -297,7 +401,7 @@ pub const Board = struct {
                     },
                 };
 
-                const word_len = reader.readInt(u32, .little) catch |e| switch (e) {
+                const word_len = map_reader.readInt(u32, .little) catch |e| switch (e) {
                     error.EndOfStream => break,
                     else => |err| {
                         std.log.err("Failed to read map file: {any}", .{err});
@@ -305,14 +409,14 @@ pub const Board = struct {
                     },
                 };
                 try buffer.resize(word_len);
-                reader.readNoEof(buffer.items) catch |e| switch (e) {
+                map_reader.readNoEof(buffer.items) catch |e| switch (e) {
                     error.EndOfStream => break,
                     else => |err| {
                         std.log.err("Failed to read map file: {any}", .{err});
                         return err;
                     },
                 };
-                const clue_len = reader.readInt(u32, .little) catch |e| switch (e) {
+                const clue_len = map_reader.readInt(u32, .little) catch |e| switch (e) {
                     error.EndOfStream => break,
                     else => |err| {
                         std.log.err("Failed to read map file: {any}", .{err});
@@ -320,7 +424,7 @@ pub const Board = struct {
                     },
                 };
                 try buffer.resize(clue_len + word_len);
-                reader.readNoEof(buffer.items[word_len..]) catch |e| switch (e) {
+                map_reader.readNoEof(buffer.items[word_len..]) catch |e| switch (e) {
                     error.EndOfStream => break,
                     else => |err| {
                         std.log.err("Failed to read map file: {any}", .{err});
@@ -350,49 +454,134 @@ pub const Board = struct {
             const quad_y = index / (board_width / GRID_SIZE);
             quad.* = try Quad.init(allocator, @intCast(quad_x), @intCast(quad_y));
         }
+        
         const quad_size = to_quad_size(@Vector(2, u32){board_width, board_height});
-        var id: u32 = 0;
-        for (clues.items) |*clue| {
-            id += 1;
-            clue.id = id; // Assign a unique ID to the clue
-            if (to_quad_index(map_to_quad_pos(clue.pos), quad_size)) |idx| {
-                quads[idx].clues.append(clue) catch |err| {
-                    std.log.err("Failed to append clue to quad: {any}", .{err});
-                    return err;
+        var is_valid_cache = false;
+        invalid_cache: {
+            if(cache_reader) |reader| {
+                const cache_magic = reader.readInt(u32, .little) catch |e| {
+                    std.log.err("Failed to read map cache file: {any}", .{e});
+                    return e;
                 };
-            } else {
-                std.log.warn("clue is incomplete trying to get quad: {any}", .{clue.pos});
+                if (cache_magic != MAP_CACHE_MAGIC_NUMBER) {
+                    std.log.err("Invalid map cache file magic number: expected {x}, got {x}", .{MAP_CACHE_MAGIC_NUMBER, cache_magic});
+                    break :invalid_cache;
+                }
+                _ = reader.readByte() catch |e| {
+                    std.log.err("Failed to read map cache file: {any}", .{e});
+                    return e;
+                };
+                const cache_uid = reader.readInt(u32, .little) catch |e| {
+                    std.log.err("Failed to read map cache file: {any}", .{e});
+                    return e;
+                };
+                if( cache_uid != uid) {
+                    std.log.err("UID mismatch: expected {d}, got {d}", .{uid, cache_uid});
+                    break :invalid_cache;
+                }
+                const cache_width = reader.readInt(u32, .little) catch |e| {
+                    std.log.err("Failed to read map cache file: {any}", .{e});
+                    return e;
+                };
+                const cache_height = reader.readInt(u32, .little) catch |e| {
+                    std.log.err("Failed to read map cache file: {any}", .{e});
+                    return e;
+                };
+                if (cache_width != board_width or cache_height != board_height) {
+                    std.log.err("Size mismatch: expected {d}x{d}, got {d}x{d}", .{board_width, board_height, cache_width, cache_height});
+                    break :invalid_cache;
+                }
+                const quad_whole_map = game.map_to_quad(
+                    rect.create(0, 0, board_width, board_height));
+                var iter = quad_whole_map.iterator();
+                while (iter.next()) |quad_pos| {
+                    if(to_quad_index(quad_pos, quad_size)) |idx| {
+                        var i: usize = 0; 
+                        while (i < game.GRID_LEN) : (i += 1) {
+                            quads[idx].input[i] = Cell.decode(reader.readByte() catch |err| {
+                                std.log.err("Failed to read quad data from backup buffer: {any}", .{err});
+                                return err;
+                            });
+                        }
+                    } else {
+                        unreachable;
+                    }
+                }
+                is_valid_cache = true;
             }
-            const cell_pos_dir: @Vector(2, u32) = if(clue.dir == .Across) @Vector(2, u32){1, 0} else @Vector(2, u32){0, 1};
-            const quad_hit = if(clue.dir == .Across) map_to_quad(rect.create(clue.pos[0], clue.pos[1], @as(u32, @intCast(clue.word.len)), 1))
-                else map_to_quad(rect.create(clue.pos[0], clue.pos[1], 1, @as(u32, @intCast(clue.word.len))));
-            var iter = quad_hit.iterator();
-            while (iter.next()) |quad_pos| {
-                if (to_quad_index(quad_pos, quad_size)) |idx| {
-                    quads[idx].overlapping_clues.append(clue) catch |err| {
+        }
+        
+        {
+            var id: u32 = 0;
+            for (clues.items) |*clue| {
+                id += 1;
+                clue.id = id; // Assign a unique ID to the clue
+                if (to_quad_index(map_to_quad_pos(clue.pos), quad_size)) |idx| {
+                    quads[idx].clues.append(clue) catch |err| {
                         std.log.err("Failed to append clue to quad: {any}", .{err});
                         return err;
                     };
                 } else {
-                    std.log.warn("clue is incomplete trying to get quad: {any} quads: {any}", .{ quad_pos, quad_hit });
+                    std.log.warn("clue is incomplete trying to get quad: {any}", .{clue.pos});
                 }
-            }
+                const cell_pos_dir: @Vector(2, u32) = if(clue.dir == .Across) @Vector(2, u32){1, 0} else @Vector(2, u32){0, 1};
+                const quad_hit = if(clue.dir == .Across) map_to_quad(rect.create(clue.pos[0], clue.pos[1], @as(u32, @intCast(clue.word.len)), 1))
+                    else map_to_quad(rect.create(clue.pos[0], clue.pos[1], 1, @as(u32, @intCast(clue.word.len))));
+                var iter = quad_hit.iterator();
+                while (iter.next()) |quad_pos| {
+                    if (to_quad_index(quad_pos, quad_size)) |idx| {
+                        quads[idx].overlapping_clues.append(clue) catch |err| {
+                            std.log.err("Failed to append clue to quad: {any}", .{err});
+                            return err;
+                        };
+                    } else {
+                        std.log.warn("clue is incomplete trying to get quad: {any} quads: {any}", .{ quad_pos, quad_hit });
+                    }
+                }
 
-            for (clue.word, 0..) |_, index| {
-                const pos = clue.pos + (cell_pos_dir * @Vector(2,u32){@intCast(index), @intCast(index)});
-                if(to_quad_index(map_to_quad_pos(pos), quad_size)) |quad_idx| {
-                    quads[quad_idx].input[to_cell_index(pos)].value = Value.empty;  
-                } else {
-                    std.log.err("Failed to set value for clue at position {any}", .{pos});
+                if(!is_valid_cache) {
+                    for (clue.word, 0..) |_, index| {
+                        const pos = clue.pos + (cell_pos_dir * @Vector(2,u32){@intCast(index), @intCast(index)});
+                        if(to_quad_index(map_to_quad_pos(pos), quad_size)) |quad_idx| {
+                            quads[quad_idx].input[to_cell_index(pos)].value = Value.empty;  
+                        } else {
+                            std.log.err("Failed to set value for clue at position {any}", .{pos});
+                        }
+                    }
                 }
             }
         }
+       
         return .{
             .allocator = allocator,
+            .uid = uid,
             .size = @Vector(2, u32){ board_width, board_height },
             .quads = quads,
             .clues = clues,
         };
+    }
+
+    pub fn unlock_quads_shared(
+        self: *Board,
+        quad_rect: rect.Rect) void {
+        var iter = quad_rect.iterator();
+        while (iter.next()) |pos| {
+            if(game.to_quad_index(pos, game.to_quad_size(self.size))) |idx| {
+                self.quads[idx].lock.unlockShared();
+            }
+        }
+    }
+
+    pub fn lock_quads_shared(
+        self: *Board,
+        quad_rect: rect.Rect) void {
+        var iter = quad_rect.iterator();
+        while (iter.next()) |pos| {
+            if(game.to_quad_index(pos, game.to_quad_size(self.size))) |idx| {
+                self.quads[idx].lock.lockShared();
+            }
+        }
+
     }
 
     pub fn lock_quads(self: *Board, quad_rect: rect.Rect) void {
@@ -483,32 +672,56 @@ pub const Board = struct {
     }
 };
 
+
+pub fn background_worker() void {
+    while(state.running.load(.monotonic)) {
+        if(std.time.timestamp() - state.backup_timestamp >= BACKUP_TIME_STAMP) {
+            std.log.info("Creating game backup...", .{});
+            state.backup_timestamp = std.time.timestamp();
+            state.board.write_cache_s3(
+                state.gpa,
+                state.bucket,
+                state.crossword_cache,
+                .{
+                    .region = state.region,
+                    .client = state.aws_client,
+                },
+            ) catch |err| {
+                std.log.err("Failed to write board cache to S3: {any}", .{err});
+            };
+        }
+        std.time.sleep(std.time.ns_per_ms * 200);
+    }
+    game.state.board.write_cache_s3(
+        state.gpa,
+        state.bucket,
+        state.crossword_cache,
+        .{
+            .region = state.region,
+            .client = state.aws_client,
+        },
+    ) catch |err| {
+        std.log.err("Failed to write board cache to S3: {any}", .{err});
+    };
+}
+
+
 pub const State = struct {
     client_id: u32,
     client_lock: std.Thread.Mutex = .{},
     clients: ClientArrayList,
 
+    backup_timestamp: i64,
+    running: std.atomic.Value(bool),
+
+    crossword_map: []const u8,
+    crossword_cache: []const u8,
+
+    bucket: []const u8,
+    region: []const u8,
+    aws_client: aws.Client, 
+
     gpa: std.mem.Allocator,
     board: Board,
-
-    //pub fn deinit(self: *State) void {
-    //    //for (self.board.quads) |*quad| quad.deinit();
-    //    //for (self.clues.items) |*clue| clue.deinit();
-    //    self.clients.deinit();
-    //    self.board.deinit();
-    //    self.gpa.free(self.board.quads);
-    //}
-
-    //pub fn init(allocator: std.mem.Allocator, options: struct {
-    //    board: Board
-    //}) !State {
-    //    return .{
-    //        .allocator = allocator,
-    //        .client_id = 0,
-    //        .client_lock = .{},
-    //        .clients = ClientArrayList.init(allocator),
-    //        .board = options.board
-    //    };
-    //}
 };
 pub var state: State = undefined;

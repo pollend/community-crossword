@@ -4,6 +4,7 @@ const WebSockets = zap.WebSockets;
 const client = @import("client.zig");
 const game = @import("game.zig");
 const rect = @import("rect.zig");
+const aws = @import("aws");
 
 fn on_upgrade(r: zap.Request, target_protocol: []const u8) !void {
     // make sure we're talking the right protocol
@@ -209,7 +210,6 @@ fn __get_env_var(allocator: std.mem.Allocator, key: []const u8) !?[]const u8 {
     };
 }
 
-
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{
         .thread_safe = true,
@@ -218,8 +218,11 @@ pub fn main() !void {
 
     var port: u16 = 3010; 
     var crossword_map: []const u8 = undefined;
+    var crossword_cache: []const u8 = undefined;
     var threads: i16 = 1;
     var workers: i16 = 1;
+    var bucket: []const u8  = undefined;
+    var region: []const u8  = undefined;
     if(try __get_env_var(allocator, "PORT")) | port_str| {
         port = try __parse_env_integer(u16, port_str, "PORT");
         defer allocator.free(port_str);
@@ -230,7 +233,13 @@ pub fn main() !void {
     if(try __get_env_var(allocator, "CROSSWORD_MAP")) |str| {
         crossword_map = str;
     } else {
-        crossword_map = "./crossword.map";
+        crossword_map = "crossword.map";
+    }
+    
+    if(try __get_env_var(allocator, "CROSSWORD_CACHE")) |str| {
+        crossword_cache = str;
+    } else {
+        crossword_cache  = "crossword.cache";
     }
 
     if(try __get_env_var(allocator, "THREADS")) |thread_str| {
@@ -246,20 +255,70 @@ pub fn main() !void {
     } else {
         workers = 1;
     }
-
-    // configure game state
-    {
-        var file = try std.fs.cwd().openFile(crossword_map, .{});
-        defer file.close();
-        var reader = file.reader();
-        game.state = .{
-            .gpa = allocator,
-            .clients = std.ArrayList(*client.Client).init(allocator),
-            .client_id = 0,
-            .board = try game.Board.load_from_reader(allocator, reader.any())
-        };
+    
+    if(try __get_env_var(allocator, "AWS_REGION")) |region_str| {
+        region = region_str;
+    } else {
+       region = "us-west-2"; 
+    }
+    
+    if(try __get_env_var(allocator, "AWS_BUCKET")) |bucket_str| {
+        bucket = bucket_str;
+    } else {
+        bucket = "crossword";
     }
 
+    if(try __get_env_var(allocator, "AWS_ENDPOINT_URL")) |str| {
+        std.debug.print("AWS_ENDPOINT_URL: {s}\n", .{str});
+    }
+
+    var aws_client = aws.Client.init(allocator,.{});
+    defer aws_client.deinit();
+        
+    game.state = .{
+        .gpa = allocator,
+        .clients = std.ArrayList(*client.Client).init(allocator),
+        .client_id = 0,
+        .backup_timestamp = 0,
+        .running = std.atomic.Value(bool).init(true),
+
+        .crossword_cache = crossword_cache,
+        .crossword_map = crossword_map,
+
+        .bucket = bucket,
+        .region = region,
+        .aws_client = aws_client,
+   
+        .board = undefined,
+    };
+
+    // load the crossword map 
+    {
+        const map_resp = try aws.Request(aws.services.s3.get_object).call(.{
+            .bucket = bucket,
+            .key = crossword_map,
+        }, .{
+            .region = region,
+            .client = aws_client,
+        });
+        defer map_resp.deinit();
+        var stream = std.io.fixedBufferStream(map_resp.response.body orelse "");
+        var reader = stream.reader();
+
+        const cache_resp = try aws.Request(aws.services.s3.get_object).call(.{
+            .bucket = bucket,
+            .key = crossword_cache,
+        }, .{
+            .region = region,
+            .client = aws_client,
+        });
+        defer cache_resp.deinit();
+        var cache_stream = std.io.fixedBufferStream(cache_resp.response.body orelse "");
+        var cache_reader = cache_stream.reader();
+        game.state.board = try game.Board.load(allocator, reader.any(),cache_reader.any());
+    }
+  
+    var background_worker = try std.Thread.spawn(.{}, game.background_worker, .{});
     var listener = zap.HttpListener.init(
         .{
             .port = port,
@@ -286,6 +345,8 @@ pub fn main() !void {
         .threads = threads,
         .workers = workers,
     });
+    game.state.running.store(false, .monotonic);
+    background_worker.join(); 
 }
 
 const expect = std.testing.expect;
