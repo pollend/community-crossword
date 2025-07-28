@@ -26,10 +26,13 @@ RUN npm install
 RUN npm run build
 
 # Build the application
-RUN zig build -Dtarget=x86_64-linux 
+RUN zig build --release=safe -Dtarget=x86_64-linux 
 
 # Final stage - minimal runtime image
 FROM debian:latest
+
+RUN apt-get update
+RUN apt-get install -y ca-certificates
 
 # Copy the built binary
 COPY --from=zig-builder /app/zig-out/bin/app /usr/local/bin
