@@ -6,9 +6,13 @@ export default ({ mode }) => {
   process.env = { ...process.env, ...loadEnv(mode, process.cwd()) };
   return defineConfig({
     plugins: [svelte(), tailwindcss()],
+    base: "",
     server: {
       port: 8080,
       open: true,
+    },
+    build: {
+      assetsDir: "",
     },
     define: {
       BASE_URL: process.env.BASE_URL,
