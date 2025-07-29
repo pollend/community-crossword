@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+env:
+  ZIG_VERSION: 0.14.0
+  NODE_VERSION: 18
+
+jobs:
+  # Web frontend build and test
+  web-frontend:
+    name: Build Web Frontend
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 22
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Type check and build
+      env:
+        - BASE_URL='ws://squid-app-tq2pb.ondigitalocean.app'
+      run: npm run build
+
+    - name: Install Butler
+      run: |
+        curl -L -o butler.zip https://broth.itch.ovh/butler/linux-amd64/LATEST/archive/default
+        unzip butler.zip
+        chmod +x butler
+        ./butler -V
+      
+    - name: Upload to Itch.io
+      env:
+        BUTLER_API_KEY: ${{ secrets.BUTLER_API_KEY }}
+      run: |
+        ./butler login
+        ./butler push dist mpollind/community-crossword:html
