@@ -14,8 +14,5 @@ export default ({ mode }) => {
     build: {
       assetsDir: "",
     },
-    define: {
-      BASE_URL: process.env.BASE_URL,
-    },
   });
 };
