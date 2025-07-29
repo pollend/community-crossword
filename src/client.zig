@@ -12,12 +12,14 @@ pub const MsgID = enum(u8) {
     set_view = 1, 
     sync_block = 2, 
     input_or_sync_cell = 3,
-    ping = 4,
-    unknown };
+    client_sync_cursor = 4,
+    unknown 
+};
 
 pub const Client = @This();
 
 lock: std.Thread.Mutex,
+uid: u32 = 0, // Unique identifier for the client
 channel: []const u8,
 handle: WebSockets.WsHandle,
 settings: WebsocketHandler.WebSocketSettings,
@@ -26,7 +28,9 @@ quad_rect: rect.Rect, // The quad region that the client is subscribed to
 ready: bool,
 allocator: std.mem.Allocator,
 
-last_ping: i64 = 0, // Timestamp of the last ping sent from the client 
+cursor_pos: ?@Vector(2, i32) = null, // The position of the cursor in the client's view
+inactive_timeout: i64 = 0, // Timestamp of the last activity from the client
+
 pub fn upgrade(allocator: std.mem.Allocator, r: zap.Request) !*Client {
     game.state.client_lock.lock();
     defer game.state.client_lock.unlock();
@@ -34,12 +38,15 @@ pub fn upgrade(allocator: std.mem.Allocator, r: zap.Request) !*Client {
     errdefer client.deinit();
     const client_channel = try std.fmt.allocPrint(allocator, "c-{any}", .{game.state.client_id});
     game.state.client_id += 1;
+    const random = std.crypto.random; 
 
     client.* = .{
         .lock = .{},
         .allocator = allocator,
         .channel = client_channel,
         .handle = undefined,
+        .uid = random.int(u32),
+        .inactive_timeout = std.time.timestamp(),
         .cell_rect = rect.empty(),
         .quad_rect = rect.empty(),
         .settings = .{ .on_open = on_open_websocket, .on_close = on_close_websocket, .on_message = on_message_websocket, .context = client },
@@ -73,12 +80,29 @@ fn on_close_websocket(client: ?*Client, _: isize) !void {
     }
 }
 
-pub fn msg_parse_view(reader: std.io.AnyReader) !rect.Rect {
+pub fn msg_parse_view(reader: std.io.AnyReader) !struct {
+    view: rect.Rect,
+    cursor: ?@Vector(2, i32),
+}{
     const x = try reader.readInt(u32, .little);
     const y = try reader.readInt(u32, .little);
-    const width = try reader.readInt(u32, .little);
-    const height = try reader.readInt(u32, .little);
-    return rect.create(x, y, width, height);
+    const width = try reader.readInt(u16, .little);
+    const height = try reader.readInt(u16, .little);
+
+    const cursor_x = try reader.readInt(i16, .little);
+    if(std.math.maxInt(i16) == cursor_x) {
+        return .{
+            .view = rect.create(x, y, @intCast(width), @intCast(height)),
+            .cursor = null,
+        };
+    }
+    const cursor_y = try reader.readInt(i16, .little);
+    const cur_pos = @Vector(2, i32){cursor_x, cursor_y} + 
+                    (@Vector(2, i32){@intCast(x), @intCast(y)} * @Vector(2,i32){@intCast(game.GRID_CELL_PX), @intCast(game.GRID_CELL_PX)});
+    return .{
+        .view = rect.create(x, y, @intCast(width), @intCast(height)),
+        .cursor = cur_pos,
+    };
 }
 
 pub fn msg_ready(client: *Client) !void {
@@ -103,28 +127,6 @@ fn contains_simd2(a: []const @Vector(2, u32), b: @Vector(2, u32)) bool {
     return false;
 }
 
-const BoardIterMsgLocking = game.BoardIter(
-    void,
-    __client_locking_enter,
-    __client_locking_exit,
-);
-
-fn __client_locking_enter(
-    _: *void,
-    quad: *game.Quad,
-) void {
-    quad.client_lock.lockShared();
-    quad.lock.lockShared();
-}
-
-fn __client_locking_exit(
-    _: *void,
-    quad: *game.Quad,
-) void {
-    quad.lock.unlockShared();
-    quad.client_lock.unlockShared();
-}
-
 fn on_message_websocket(
     client: ?*Client,
     _: WebSockets.WsHandle,
@@ -144,8 +146,11 @@ fn on_message_websocket(
         std.log.debug("on_message: {any} client {s}", .{ msg_id, c.channel });
         switch (msg_id) {
             .set_view => {
+                c.inactive_timeout = std.time.timestamp();
                 const board = &game.state.board;
-                c.cell_rect = try msg_parse_view(reader.any());
+                const msg = try msg_parse_view(reader.any());
+                c.cell_rect = msg.view;
+                c.cursor_pos = msg.cursor;
                 const quad_last_rect = c.quad_rect;
                 c.quad_rect = game.map_to_quad(c.cell_rect);
                 game.state.board.update_client_rect(c, quad_last_rect, c.quad_rect);
@@ -156,22 +161,18 @@ fn on_message_websocket(
                     if(game.to_quad_index(pos, game.to_quad_size(board.size))) |update_quad_idx| {
                         board.quads[update_quad_idx].lock.lockShared();
                         defer board.quads[update_quad_idx].lock.unlockShared();
-                        try net.msg_sync_block(c, &board.quads[update_quad_idx]); // Sync the first block of the quad
+                        try net.msg_sync_block(c, &board.quads[update_quad_idx]); 
                     }
                 }
             },
-            .ping => {
-                const board = &game.state.board;
-                c.last_ping = std.time.milliTimestamp();
-                try net.msg_pong(c, board);
-            },
             .input_or_sync_cell => {
+                c.inactive_timeout = std.time.timestamp();
                 const board = &game.state.board;
                 const input = try net.msg_parse_input(reader.any());
                 if(game.to_quad_index(game.map_to_quad_pos(input.pos), game.to_quad_size(board.size))) |update_quad_idx| {
                     {
-                        board.quads[update_quad_idx].client_lock.lock();
-                        defer board.quads[update_quad_idx].client_lock.unlock();
+                        board.quads[update_quad_idx].client_sub_lock.lock();
+                        defer board.quads[update_quad_idx].client_sub_lock.unlock();
                         var cell = &board.quads[update_quad_idx].input[game.to_cell_index(input.pos)];
                         if(cell.lock == 1) {
                             return; // Cell is locked, ignore the input
@@ -221,8 +222,8 @@ fn on_message_websocket(
                         }
                         for (dirty_cells.items) |dirty_pos| {
                             if(game.to_quad_index(game.map_to_quad_pos(dirty_pos), game.to_quad_size(board.size))) |dirty_quad_idx| {
-                                board.quads[dirty_quad_idx].client_lock.lockShared();
-                                defer board.quads[dirty_quad_idx].client_lock.unlockShared();
+                                board.quads[dirty_quad_idx].client_sub_lock.lockShared();
+                                defer board.quads[dirty_quad_idx].client_sub_lock.unlockShared();
                                 board.quads[dirty_quad_idx].lock.lockShared();
                                 defer board.quads[dirty_quad_idx].lock.unlockShared();
                                 for (board.quads[dirty_quad_idx].clients.items) |cl| {
@@ -246,11 +247,9 @@ fn on_message_websocket(
 
 fn on_open_websocket(client: ?*Client, handle: WebSockets.WsHandle) !void {
     if (client) |c| {
-        const board = &game.state.board;
         c.handle = handle;
         c.ready = true;
         try msg_ready(c);
-        try net.msg_pong(c, board);
         std.log.info("WebSocket connection opened for client: {s}", .{c.channel});
     } else {
         std.log.warn("WebSocket connection opened without a client context", .{});

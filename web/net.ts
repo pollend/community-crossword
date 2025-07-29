@@ -1,15 +1,22 @@
-import { Rectangle } from "pixi.js";
+import { Point, Rectangle } from "pixi.js";
 import { Clue, NetSyncBlock } from "./types";
-import { GRID_SIZE } from "./constants";
+import { GRID_CELL_PX, GRID_SIZE } from "./constants";
 
 const lastSyncedView = new Rectangle(0, 0, 0, 0);
-
+let lastCursorPos: Point = new Point(0, 0);
 export enum MessageID {
-  ready = 0,
-  set_view = 1,
-  sync_block = 2,
-  sync_input_cell = 3,
-  ping = 4,
+    ready = 0, 
+    set_view = 1, 
+    sync_block = 2, 
+    input_or_sync_cell = 3,
+    client_sync_cursor = 4,
+  client_sync = 4,
+}
+
+export interface NetCursor {
+  x: number,
+  y: number,
+  uid: number,
 }
 
 export enum Value {
@@ -280,7 +287,7 @@ export function netSendCell(ws: WebSocket, x: number, y: number, value: Value) {
   const buffer = new ArrayBuffer(1 + 4 + 4 + 1);
   let offset = 0;
   const view = new DataView(buffer);
-  view.setUint8(offset, MessageID.sync_input_cell);
+  view.setUint8(offset, MessageID.input_or_sync_cell);
   offset += 1;
   view.setUint32(offset, x, true);
   offset += 4;
@@ -290,14 +297,38 @@ export function netSendCell(ws: WebSocket, x: number, y: number, value: Value) {
   ws.send(buffer);
 }
 
-export function netSendPing(ws: WebSocket) {
-  // 1 byte for ID
-  const buffer = new ArrayBuffer(1);
-  const view = new DataView(buffer);
-  let offset = 0;
-  view.setUint8(offset, MessageID.ping);
-  offset += 1;
-  ws.send(buffer);
+//export function netSendPing(ws: WebSocket) {
+//  // 1 byte for ID
+//  const buffer = new ArrayBuffer(1);
+//  const view = new DataView(buffer);
+//  let offset = 0;
+//  view.setUint8(offset, MessageID.ping);
+//  offset += 1;
+//  ws.send(buffer);
+//}
+
+export function netParseCursors(view: DataView, offset: number): NetCursor[] {
+  const corner_x = view.getInt32(offset, true);
+  offset += 4;
+  const corner_y = view.getInt32(offset, true);
+  offset += 4;
+
+  let cursors: NetCursor[] = [];
+  while (offset < view.byteLength) {
+    let uid = view.getUint32(offset, true);
+    offset += 4;
+    const x = view.getInt16(offset, true) + corner_x;
+    offset += 2;
+    const y = view.getInt16(offset, true) + corner_y;
+    offset += 2;
+    cursors.push({
+      x: x,
+      y: y,
+      uid: uid,
+    })
+  }
+  return cursors;
+
 }
 
 export function netSendViewRect(
@@ -306,19 +337,23 @@ export function netSendViewRect(
   y: number,
   width: number,
   height: number,
-) {
+  cursorPos?: Point
+) { 
+  var xx = cursorPos?.x || -1;
+  var yy = cursorPos?.y || -1;
   if (
     lastSyncedView.x === x &&
     lastSyncedView.y === y &&
     lastSyncedView.width === width &&
-    lastSyncedView.height === height
-  ) {
+    lastSyncedView.height === height &&
+    Math.floor(lastCursorPos.x) === Math.floor(xx) &&
+    Math.floor(lastCursorPos.y) === Math.floor(yy)) {
     return;
   }
+  lastCursorPos.set(xx,yy);
   lastSyncedView.set(x, y, width, height);
-
   // 1 byte for ID, 4 bytes each for x, y, width, height
-  const buffer = new ArrayBuffer(1 + 4 + 4 + 4 + 4);
+  const buffer = new ArrayBuffer(1 + 4 + 4 + 2 + 2 + 2 + 2);
   let offset = 0;
   const view = new DataView(buffer);
   view.setUint8(offset, MessageID.set_view);
@@ -327,8 +362,17 @@ export function netSendViewRect(
   offset += 4;
   view.setUint32(offset, Math.max(0, y), true);
   offset += 4;
-  view.setUint32(offset, Math.max(0, width), true);
-  offset += 4;
-  view.setUint32(offset, Math.max(0, height), true);
+  view.setUint16(offset, Math.max(0, width), true);
+  offset += 2;
+  view.setUint16(offset, Math.max(0, height), true);
+  offset += 2;
+
+  if(cursorPos) {
+    view.setInt16(offset, cursorPos.x - (x * GRID_CELL_PX), true);
+    offset += 2;
+    view.setInt16(offset, cursorPos.y - (y * GRID_CELL_PX) , true);
+  } else {
+    view.setInt16(offset, 32767);
+  }
   ws.send(buffer);
 }

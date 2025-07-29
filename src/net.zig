@@ -7,6 +7,11 @@ pub const MsgInput = struct {
     input: game.Value,
 };
 
+pub const ClientCursor = struct {
+    uid: u32,
+    pos: @Vector(2, i32),
+};
+
 //pub fn msg_ping(c: *client.Client) !void {
 //    var buffer = std.ArrayList(u8).init(c.allocator);
 //    defer buffer.deinit();
@@ -17,6 +22,30 @@ pub const MsgInput = struct {
 //        return err;
 //    };
 //}
+
+pub fn msg_client_sync_cursors(c: *client.Client, cursors: []const ClientCursor) !void{
+    var min_corner: @Vector(2, i32) = @Vector(2, i32){0, 0};
+    for(cursors) |cur| {
+        min_corner = @select(i32, cur.pos < min_corner, cur.pos, min_corner);
+    }
+    
+    var buffer = std.ArrayList(u8).init(c.allocator);
+    defer buffer.deinit();
+    var writer = buffer.writer();
+    try writer.writeByte(@intFromEnum(client.MsgID.client_sync_cursor));
+    //try writer.writeInt(u32, @truncate(game.state.time_since_start()), .little);
+    try writer.writeInt(i32, min_corner[0], .little);
+    try writer.writeInt(i32, min_corner[1], .little);
+    for(cursors) |cur| {
+        try writer.writeInt(u32, cur.uid, .little);
+        try writer.writeInt(i16, @truncate(cur.pos[0] - min_corner[0]), .little);
+        try writer.writeInt(i16, @truncate(cur.pos[1] - min_corner[1]), .little);
+    }
+    client.WebsocketHandler.write(c.handle, buffer.items, false) catch |err| {
+        std.log.err("Failed to write message: {any}", .{err});
+        return err;
+    };
+} 
 
 pub fn msg_sync_cell(c: *client.Client, pos: @Vector(2, u32), value: game.Cell) !void {
     var buffer = std.ArrayList(u8).init(c.allocator);
@@ -33,17 +62,17 @@ pub fn msg_sync_cell(c: *client.Client, pos: @Vector(2, u32), value: game.Cell) 
 }
 
 
-pub fn msg_pong(c: *client.Client, board: *game.Board) !void {
-    var buffer = std.ArrayList(u8).init(c.allocator);
-    defer buffer.deinit();
-    var writer = buffer.writer();
-    try writer.writeByte(@intFromEnum(client.MsgID.ping));
-    try writer.writeInt(u32, @bitCast(@as(f32, @floatFromInt(board.clues_completed.load(.unordered))) / @as(f32, @floatFromInt(board.clues.items.len))), .little);
-    client.WebsocketHandler.write(c.handle, buffer.items, false) catch |err| {
-        std.log.err("Failed to write message: {any}", .{err});
-        return err;
-    };
-}
+//pub fn msg_pong(c: *client.Client, board: *game.Board) !void {
+//    var buffer = std.ArrayList(u8).init(c.allocator);
+//    defer buffer.deinit();
+//    var writer = buffer.writer();
+//    try writer.writeByte(@intFromEnum(client.MsgID.ping));
+//    try writer.writeInt(u32, @bitCast(@as(f32, @floatFromInt(board.clues_completed.load(.unordered))) / @as(f32, @floatFromInt(board.clues.items.len))), .little);
+//    client.WebsocketHandler.write(c.handle, buffer.items, false) catch |err| {
+//        std.log.err("Failed to write message: {any}", .{err});
+//        return err;
+//    };
+//}
 
 pub fn msg_sync_block(c: *client.Client, quad: *game.Quad) !void {
     var buffer = std.ArrayList(u8).init(c.allocator);

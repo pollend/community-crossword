@@ -30,7 +30,9 @@ jobs:
       run: npm ci
 
     - name: Type check and build
-      run: VITE_WS_URL='wss://squid-app-tq2pb.ondigitalocean.app/' npm run build
+      env:
+        BASE_URL: "'ws://squid-app-tq2pb.ondigitalocean.app'"
+      run: npm run build
 
     - name: Install Butler
       run: |

@@ -13,14 +13,14 @@
     charToValue,
     isBlocked,
     MessageID,
+    type NetCursor,
     netParseCell,
+    netParseCursors,
     netParseReady,
     netParseSyncChunk,
     netSendCell,
     netSendViewRect,
-    netSendPing,
     Value,
-    netParsePong,
   } from "./net";
   import { Quad } from "./quad";
   import { graphicDrawRect } from "./graphic";
@@ -33,12 +33,15 @@
   let mainStage: Container = new Container();
   let socket: WebSocket | undefined = undefined;
 
+  let mousePosition: undefined | Point = undefined;
   let mouse: MouseState = MouseState.None;
   let topLeftPosition = new Point(0, 0);
   let dragStartPosition = new Point(0, 0);
   let stageDragPosition = new Point(0, 0);
   let quads: Quad[] = [];
+  let mouseCursors: NetCursor[] = []; 
   let progress: number = $state(0);
+  let disconnected: boolean = $state(false);
 
   let highlightSlotsVertical: number[] = $state([]);
   let highlightSlotHorizontal: number[] = $state([]);
@@ -116,15 +119,6 @@
       q.destroy();
     }
     quads = updated;
-  });
-
-  const syncViewThrottle = new Throttle(100, () => {
-    const view = getViewRect();
-    const x = Math.floor(view.x / GRID_CELL_PX);
-    const y = Math.floor(view.y / GRID_CELL_PX);
-    const width = Math.floor((view.width + view.x) / GRID_CELL_PX) - x;
-    const height = Math.floor((view.height + view.y) / GRID_CELL_PX) - y;
-    netSendViewRect(socket!, x, y, width, height);
   });
 
   let boardSize = new Point(0, 0);
@@ -234,10 +228,13 @@
             (boardSize.x * GRID_CELL_PX) * Math.random(),
             (boardSize.y * GRID_CELL_PX) * Math.random(),
           );
-          syncViewThrottle.trigger();
           break;
         }
-        case MessageID.sync_input_cell: {
+        case MessageID.client_sync_cursor: {
+          mouseCursors = netParseCursors(view, offset)
+          break;
+        }
+        case MessageID.input_or_sync_cell: {
           const cell = netParseCell(view, offset);
           const quadX = Math.floor(cell.x / GRID_SIZE);
           const quadY = Math.floor(cell.y / GRID_SIZE);
@@ -263,25 +260,26 @@
           refreshQuads.trigger();
           break;
         }
-        case MessageID.ping: {
-          const payload = netParsePong(view, offset);
-          progress = payload.percentage * 100.0; 
-          break;
-        }
       }
     };
     let pingTimeout: number | undefined = undefined;
-    pingTimeout = setTimeout(() => {
+    pingTimeout = setInterval(() => {
       if (socket && socket.readyState === WebSocket.OPEN) {
-        netSendPing(socket);
+        const view = getViewRect();
+        const x = Math.floor(view.x / GRID_CELL_PX);
+        const y = Math.floor(view.y / GRID_CELL_PX);
+        const width = Math.floor((view.width + view.x) / GRID_CELL_PX) - x;
+        const height = Math.floor((view.height + view.y) / GRID_CELL_PX) - y;
+        netSendViewRect(socket!, x, y, width, height, mousePosition);
       }
-    }, 5000);
+    }, 200);
 
     socket.onclose = function () {
       if (pingTimeout) {
         clearTimeout(pingTimeout);
         pingTimeout = undefined;
       }
+      disconnected = true;
     };
 
     socket.onopen = function () {
@@ -290,10 +288,12 @@
     // ----------------------------------------------------
     const graphicContainer = new Graphics();
     const backGraphics = new Graphics();
+    const cursorsGraphics = new Graphics();
     app.stage.eventMode = "static";
     app.stage.addChild(graphicContainer);
     app.stage.addChild(mainStage);
     mainStage.addChild(backGraphics);
+    mainStage.addChild(cursorsGraphics);
 
     document.addEventListener("keydown", (event) => {
       const value = charToValue(event.key);
@@ -365,13 +365,31 @@
 
     // dragging the board
     {
+      function onMouseMove(event: FederatedMouseEvent) {
+        if(mousePosition !== undefined) {
+          mousePosition.set(event.global.x, event.global.y);
+        }
+      }
+
+      function onMouseEnter(event: FederatedMouseEvent) {
+        if (mousePosition === undefined) {
+          mousePosition = new Point(event.global.x, event.global.y);
+        }
+      }
+
+      function onMouseLeave() {
+        mousePosition = undefined;
+      }
+      app.stage.on("pointermove", onMouseMove);
+      app.stage.on("pointerout", onMouseLeave);
+      app.stage.on("pointerenter", onMouseEnter);
+
       function onBoardDragMove(event: FederatedMouseEvent) {
         mouse = MouseState.Dragging;
         stageDragPosition.set(
           dragStartPosition.x - event.global.x,
           dragStartPosition.y - event.global.y,
         );
-        syncViewThrottle.trigger();
         refreshQuads.trigger();
       }
       function onBoardDragEnd(ev: FederatedMouseEvent) {
@@ -383,7 +401,6 @@
               topLeftPosition.y + stageDragPosition.y,
             );
             stageDragPosition.set(0, 0);
-            syncViewThrottle.trigger();
             refreshQuads.trigger();
             break;
           }
@@ -415,7 +432,7 @@
 
         mouse = MouseState.None;
       }
-      app.stage.on("pointerupoutside", onBoardDragEnd);
+      //app.stage.on("pointerupoutside", onBoardDragEnd);
       app.stage.on("pointerup", onBoardDragEnd);
       app.stage.on("pointerdown", (event) => {
         mouse = MouseState.Clicking;
@@ -434,6 +451,18 @@
         new Rectangle(0, 0, size.x, size.y),
       ).fill(0xffffff);
       backGraphics.clear();
+      cursorsGraphics.clear();
+      for(let i = 0; i < mouseCursors.length; i++) {
+        const cursor = mouseCursors[i];
+        cursorsGraphics.
+          rect(
+            cursor.x - 5,
+            cursor.y - 5,
+            10,
+            10,
+          ).fill(0x000000);
+      }
+
       const center = selection.center;
       if (center) {
         let x0 = center.x;
@@ -574,6 +603,27 @@
     return "";
   });
 </script>
+
+<!-- Disconnect Dialog -->
+{#if disconnected}
+  <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+    <div class="bg-white rounded-lg p-6 max-w-md mx-4 shadow-xl">
+      <div class="text-center">
+        <div class="text-6xl mb-4">🔌</div>
+        <h2 class="text-2xl font-bold text-gray-800 mb-3">Connection Lost</h2>
+        <p class="text-gray-600 mb-6">
+          The connection to the server has been lost. Please check your internet connection and try again.
+        </p>
+        <button 
+          class="bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-6 rounded-lg transition-colors"
+          on:click={() => location.reload()}
+        >
+          Reconnect
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <div class="container mx-auto flex sm:w-full">
   <div class="flex-4 flex flex-col">

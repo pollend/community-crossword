@@ -128,74 +128,6 @@ fn load_board(allocator: std.mem.Allocator, path: []const u8, board_width: *u32,
     }
 }
 
-//const Config = struct {
-//    allocator: std.mem.Allocator,
-//    port: u16,
-//    crossword_map: []const u8,
-//    threads: i16,
-//    workers: i16,
-//
-//    fn __parse_env_integer(comptime T: type, value: []const u8, env_name: []const u8) !T {
-//        return std.fmt.parseInt(T, value, 10) catch |err| {
-//            std.log.err("Error: Invalid {s} value '{s}': {any}", .{ env_name, value, err });
-//            return err;
-//        };
-//    }
-//
-//    fn __get_env_var(allocator: std.mem.Allocator, key: []const u8) !?[]const u8 {
-//        return std.process.getEnvVarOwned(allocator, key) catch |err| switch (err) {
-//            error.EnvironmentVariableNotFound => return null,
-//            else => return err,
-//        };
-//    }
-//
-//
-//    fn deinit(self: *Config) void {
-//        self.allocator.free(self.crossword_map);
-//    }
-//    fn load_config_from_env(allocator: std.mem.Allocator) !Config {
-//        var port: u16 = 3010; 
-//        var crossword_map: []const u8 = undefined;
-//        var threads: i16 = 1;
-//        var workers: i16 = 1;
-//
-//        if(try __get_env_var(allocator, "PORT")) | port_str| {
-//            port = try __parse_env_integer(u16, port_str, "PORT");
-//            defer allocator.free(port_str);
-//        } else {
-//            port = 3010;
-//        }
-//
-//        if(try __get_env_var(allocator, "CROSSWORD_MAP")) |str| {
-//            crossword_map = str;
-//        } else {
-//            crossword_map = try allocator.dupe(u8,"./crossword.map");
-//        }
-//
-//        if(try __get_env_var(allocator, "THREADS")) |thread_str| {
-//            threads = try __parse_env_integer(i16, thread_str, "THREADS");
-//            defer allocator.free(thread_str);
-//        } else {
-//            threads = 1;
-//        }
-//
-//        if(try __get_env_var(allocator, "WORKERS")) |thread_str| {
-//            workers = try __parse_env_integer(i16, thread_str, "WORKERS");
-//            defer allocator.free(thread_str);
-//        } else {
-//            workers = 1;
-//        }
-//
-//        return .{
-//            .allocator = allocator,
-//            .port = port,
-//            .crossword_map = crossword_map,
-//            .threads = threads,
-//            .workers = workers,
-//        };
-//    }
-//};
-
 fn __parse_env_integer(comptime T: type, value: []const u8, env_name: []const u8) !T {
     return std.fmt.parseInt(T, value, 10) catch |err| {
         std.log.err("Error: Invalid {s} value '{s}': {any}", .{ env_name, value, err });
@@ -285,6 +217,8 @@ pub fn main() !void {
 
         .crossword_cache = crossword_cache,
         .crossword_map = crossword_map,
+
+        .timestamp_start_ms = std.time.milliTimestamp(),
 
         .bucket = bucket,
         .region = region,
