@@ -152,7 +152,6 @@ pub fn main() !void {
     var crossword_map: []const u8 = undefined;
     var crossword_cache: []const u8 = undefined;
     var threads: i16 = 1;
-    var workers: i16 = 1;
     var bucket: []const u8  = undefined;
     var region: []const u8  = undefined;
     if(try __get_env_var(allocator, "PORT")) | port_str| {
@@ -179,13 +178,6 @@ pub fn main() !void {
         defer allocator.free(thread_str);
     } else {
         threads = 1;
-    }
-
-    if(try __get_env_var(allocator, "WORKERS")) |thread_str| {
-        workers = try __parse_env_integer(i16, thread_str, "WORKERS");
-        defer allocator.free(thread_str);
-    } else {
-        workers = 1;
     }
     
     if(try __get_env_var(allocator, "AWS_REGION")) |region_str| {
@@ -271,7 +263,7 @@ pub fn main() !void {
     std.log.info("Server configuration:", .{});
     std.log.info("  Port: {d}", .{port});
     std.log.info("  Crossword map: {s}", .{crossword_map});
-    std.log.info("  Threads: {d}, Workers: {d}", .{ threads, workers });
+    std.log.info("  Threads: {d}, Workers: {d}", .{ threads, 1 });
     std.log.info("", .{});
     std.log.info("Connect with browser to http://localhost:{d}.", .{port});
     std.log.info("Connect to websocket on ws://localhost:{d}.", .{port});
@@ -279,7 +271,7 @@ pub fn main() !void {
 
     zap.start(.{
         .threads = threads,
-        .workers = workers,
+        .workers = 1,
     });
     game.state.running.store(false, .monotonic);
     background_worker.join(); 

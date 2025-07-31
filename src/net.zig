@@ -27,8 +27,7 @@ pub fn msg_broadcast_game_state(c: *client.Client, board: *game.Board, num_playe
     var writer = buffer.writer();
     try writer.writeByte(@intFromEnum(MsgID.broadcast_game_state));
     try writer.writeInt(u32, @intCast(num_players), .little);
-    try writer.writeInt(u32, 
-        @bitCast(@as(f32,@floatFromInt(board.clues_completed.load(.unordered))) / @as(f32, @floatFromInt(board.clues.items.len))), .little);
+    try writer.writeInt(u32, @bitCast(@as(f32, @floatFromInt(board.clues_completed.load(.unordered))) / @as(f32, @floatFromInt(board.clues.items.len))), .little);
     client.WebsocketHandler.write(c.handle, buffer.items, false) catch |err| {
         std.log.err("Failed to write message: {any}", .{err});
         return err;
@@ -54,28 +53,28 @@ pub fn msg_sync_cursors(c: *client.Client, last_cursors: []const client.TrackedC
     defer same_cursors.deinit();
     var send_cursor = try std.bit_set.DynamicBitSet.initEmpty(c.allocator, new_cursors.len);
     defer send_cursor.deinit();
-    next_cursor: for(new_cursors, 0..) |nc, new_idx| {
+    next_cursor: for (new_cursors, 0..) |nc, new_idx| {
         for (last_cursors, 0..) |lc, old_idx| {
             if (nc.client_id == lc.client_id) {
                 same_cursors.set(old_idx);
                 if (std.simd.countTrues(nc.pos == lc.pos) == 2) {
-                    continue :next_cursor; 
+                    continue :next_cursor;
                 }
             }
         }
         send_cursor.set(new_idx);
     }
     const delete_cursor = last_cursors.len - same_cursors.count();
-    if(delete_cursor == 0 and send_cursor.count() == 0) {
+    if (delete_cursor == 0 and send_cursor.count() == 0) {
         return; // No cursors to sync
     }
     var buffer = std.ArrayList(u8).init(c.allocator);
     defer buffer.deinit();
     var writer = buffer.writer();
-    if(delete_cursor > 0) {
+    if (delete_cursor > 0) {
         try writer.writeByte(@intFromEnum(MsgID.sync_cursors_delete));
         try writer.writeInt(u16, @truncate(delete_cursor), .little);
-        for(last_cursors, 0..) |lc, old_idx| {
+        for (last_cursors, 0..) |lc, old_idx| {
             if (!same_cursors.isSet(old_idx)) {
                 try writer.writeInt(u32, lc.client_id, .little);
             }
@@ -87,14 +86,14 @@ pub fn msg_sync_cursors(c: *client.Client, last_cursors: []const client.TrackedC
     const quad_pos_px = @Vector(2, i32){ @as(i32, @intCast(c.quad_rect.x * game.GRID_SIZE * game.CELL_PIXEL_SIZE)), @as(i32, @intCast(c.quad_rect.y * game.GRID_SIZE * game.CELL_PIXEL_SIZE)) };
     try writer.writeInt(u16, @intCast(c.quad_rect.x), .little);
     try writer.writeInt(u16, @intCast(c.quad_rect.y), .little);
-    
-    for(new_cursors, 0..) |new_c, new_idx| {
+
+    for (new_cursors, 0..) |new_c, new_idx| {
         if (!send_cursor.isSet(new_idx)) continue;
         try writer.writeInt(u32, new_c.client_id, .little);
         try writer.writeInt(i16, @as(i16, @truncate(@as(i32, @intCast(new_c.pos[0])) - quad_pos_px[0])), .little);
         try writer.writeInt(i16, @as(i16, @truncate(@as(i32, @intCast(new_c.pos[1])) - quad_pos_px[1])), .little);
     }
-    
+
     client.WebsocketHandler.write(c.handle, buffer.items, false) catch |err| {
         std.log.err("Failed to write message: {any}", .{err});
         return err;
@@ -104,7 +103,7 @@ pub fn msg_sync_cursors(c: *client.Client, last_cursors: []const client.TrackedC
 pub fn msg_parse_view(reader: std.io.AnyReader) !struct {
     cell_rect: rect.Rect,
     cursor_pos: @Vector(2, u32),
-}{
+} {
     const x = try reader.readInt(u16, .little);
     const y = try reader.readInt(u16, .little);
     const width = try reader.readInt(u16, .little);
@@ -115,7 +114,7 @@ pub fn msg_parse_view(reader: std.io.AnyReader) !struct {
     return .{
         .cell_rect = rect.create(x, y, width, height),
         .cursor_pos = .{ cursor_x, cursor_y },
-    }; 
+    };
 }
 
 pub fn msg_ready(c: *client.Client) !void {
@@ -166,9 +165,7 @@ pub fn msg_sync_block(c: *client.Client, quad: *game.Quad) !void {
     defer compressed_stream.deinit();
     var compressed_writer = compressed_stream.writer();
     try compressed_writer.writeByte(@intFromEnum(MsgID.sync_block));
-    try std.compress.zlib.compress(stream.reader(), compressed_writer, .{
-            .level = .default
-    });
+    try std.compress.zlib.compress(stream.reader(), compressed_writer, .{ .level = .default });
     client.WebsocketHandler.write(c.handle, compressed_stream.items, false) catch |err| {
         std.log.err("Failed to write message: {any}", .{err});
         return err;

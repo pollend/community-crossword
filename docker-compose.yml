@@ -15,6 +15,7 @@ services:
       - "AWS_ENDPOINT_URL=http://minio:9000"
       - "AWS_SECRET_ACCESS_KEY=minioadmin"
       - "AWS_ACCESS_KEY_ID=minioadmin"
+      - "THREADS=4"
     volumes:
       - ./src:/app/src:ro
       - ./build.zig:/app/build.zig:ro
