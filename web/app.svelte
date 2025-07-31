@@ -199,6 +199,85 @@
     return new Point(bound.width, bound.height);
   }
 
+  // Function to draw a detailed cursor pointer
+  function drawCursor(graphics: Graphics, x: number, y: number, clientId: number) {
+    // Generate a consistent color based on client ID
+    const hue = (clientId * 137.508) % 360; // Golden angle for good color distribution
+
+    // Convert HSL to RGB for PixiJS
+    const h = hue / 360;
+    const s = 0.7;
+    const l = 0.5;
+    
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const x1 = c * (1 - Math.abs((h * 6) % 2 - 1));
+    const m = l - c / 2;
+    
+    let r = 0, g = 0, b = 0;
+    if (h < 1/6) { r = c; g = x1; b = 0; }
+    else if (h < 2/6) { r = x1; g = c; b = 0; }
+    else if (h < 3/6) { r = 0; g = c; b = x1; }
+    else if (h < 4/6) { r = 0; g = x1; b = c; }
+    else if (h < 5/6) { r = x1; g = 0; b = c; }
+    else { r = c; g = 0; b = x1; }
+    
+    const rgb = ((Math.round((r + m) * 255) << 16) | 
+                 (Math.round((g + m) * 255) << 8) | 
+                 Math.round((b + m) * 255));
+
+    // Draw cursor pointer shape
+    const points = [
+      x, y,           // tip
+      x, y + 16,      // bottom left
+      x + 4, y + 12,  // left indent
+      x + 8, y + 14,  // middle point
+      x + 12, y + 10, // right point
+      x + 8, y + 6    // right indent
+    ];
+
+    // Draw white outline/border
+    graphics
+      .poly(points)
+      .fill(0xFFFFFF)
+      .stroke({ width: 2, color: 0x000000 });
+
+    // Draw colored fill (slightly smaller)
+    const innerPoints = [
+      x + 1, y + 1,
+      x + 1, y + 14,
+      x + 4, y + 11,
+      x + 7, y + 12,
+      x + 10, y + 9,
+      x + 7, y + 6
+    ];
+
+    graphics
+      .poly(innerPoints)
+      .fill(rgb);
+
+    // Add a small shadow effect
+    const shadowPoints = [
+      x + 2, y + 2,
+      x + 2, y + 17,
+      x + 5, y + 13,
+      x + 9, y + 15,
+      x + 13, y + 11,
+      x + 9, y + 7
+    ];
+
+    graphics
+      .poly(shadowPoints)
+      .fill({
+        color: 0x000000, 
+        alpha: 0.2
+      }); // Semi-transparent black shadow
+
+    graphics
+      .circle(x + 14, y + 2, 3)
+      .fill(rgb)
+      .stroke({ width: 1, color: 0xFFFFFF });
+  }
+
   function setGamePosition(x: number, y: number) {
     const size = viewSize();
     topLeftPosition.set(
@@ -485,7 +564,7 @@
       ).fill(0xffffff);
       backGraphics.clear();
       frontGraphics.clear();
-      // render other player cursors as bees
+      // render other player cursors
       {
         for (let i = otherPlayerCursors.length - 1; i >= 0; i--) {
           const cursor = otherPlayerCursors[i];
@@ -500,9 +579,9 @@
             cursor.t = 0;
             cursor.positions.shift();
           }
-          frontGraphics
-            .circle(position.x, position.y, 8)
-            .fill(0xffd700); // Golden yellow
+          
+          // Draw the detailed cursor instead of a simple circle
+          drawCursor(frontGraphics, position.x, position.y, cursor.clientId);
         }
       }
 

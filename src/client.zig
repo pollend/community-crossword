@@ -98,7 +98,6 @@ fn on_close_websocket(client: ?*Client, _: isize) !void {
     }
 }
 
-
 fn contains_simd2(a: []const @Vector(2, u32), b: @Vector(2, u32)) bool {
     for (a) |item| {
         if (std.simd.countTrues(item == b) == 2) {
@@ -107,7 +106,6 @@ fn contains_simd2(a: []const @Vector(2, u32), b: @Vector(2, u32)) bool {
     }
     return false;
 }
-
 
 fn on_message_websocket(
     client: ?*Client,

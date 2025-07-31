@@ -1,6 +1,5 @@
 const std = @import("std");
 
-
 pub const RateLimiterState = enum(u8) {
     refresh,
     timeout,

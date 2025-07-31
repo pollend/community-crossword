@@ -1,6 +1,7 @@
 import { Point, Rectangle } from "pixi.js";
 import { Clue, NetSyncBlock } from "./types";
 import { GRID_SIZE, GRID_CELL_PX } from "./constants";
+import pako from "pako";
 
 const lastSyncedView = new Rectangle(0, 0, 0, 0);
 const lastCursorPosition = new Point(0, 0);
@@ -286,9 +287,13 @@ export function netParsePong(view: DataView, offset: number) {
 }
 
 export function netParseSyncChunk(
-  view: DataView,
+  compressed_view: DataView,
   offset: number,
 ): NetSyncBlock {
+  const view = new DataView(
+    pako.ungzip(compressed_view.buffer.slice(offset)).buffer,
+  );
+  offset = 0;
   const x = view.getUint32(offset, true);
   offset += 4;
   const y = view.getUint32(offset, true);

@@ -20,17 +20,6 @@ pub const MsgInput = struct {
     input: game.Value,
 };
 
-//pub fn msg_ping(c: *client.Client) !void {
-//    var buffer = std.ArrayList(u8).init(c.allocator);
-//    defer buffer.deinit();
-//    var writer = buffer.writer();
-//    try writer.writeByte(@intFromEnum(client.MsgID.ping));
-//    client.WebsocketHandler.write(c.handle, buffer.items, false) catch |err| {
-//        std.log.err("Failed to write message: {any}", .{err});
-//        return err;
-//    };
-//}
-
 pub fn msg_sync_cell(c: *client.Client, pos: @Vector(2, u32), value: game.Cell) !void {
     var buffer = std.ArrayList(u8).init(c.allocator);
     defer buffer.deinit();
@@ -143,7 +132,6 @@ pub fn msg_sync_block(c: *client.Client, quad: *game.Quad) !void {
     var buffer = std.ArrayList(u8).init(c.allocator);
     defer buffer.deinit();
     var writer = buffer.writer();
-    try writer.writeByte(@intFromEnum(MsgID.sync_block));
     try writer.writeInt(u32, quad.x, .little);
     try writer.writeInt(u32, quad.y, .little);
     var i: usize = 0;
@@ -158,7 +146,15 @@ pub fn msg_sync_block(c: *client.Client, quad: *game.Quad) !void {
         try writer.writeInt(u16, @intCast(clue.clue.len), .little);
         try writer.writeAll(clue.clue);
     }
-    client.WebsocketHandler.write(c.handle, buffer.items, false) catch |err| {
+    var stream = std.io.fixedBufferStream(buffer.items);
+    var compressed_stream = std.ArrayList(u8).init(c.allocator);
+    defer compressed_stream.deinit();
+    var compressed_writer = compressed_stream.writer();
+    try compressed_writer.writeByte(@intFromEnum(MsgID.sync_block));
+    try std.compress.zlib.compress(stream.reader(), compressed_writer, .{
+            .level = .default
+    });
+    client.WebsocketHandler.write(c.handle, compressed_stream.items, false) catch |err| {
         std.log.err("Failed to write message: {any}", .{err});
         return err;
     };
