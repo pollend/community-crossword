@@ -1,6 +1,19 @@
-const game = @import("game.zig");
 const std = @import("std");
+
 const client = @import("client.zig");
+const game = @import("game.zig");
+const rect = @import("rect.zig");
+
+pub const MsgID = enum(u8) { 
+    ready = 0, 
+    set_view = 1, 
+    sync_block = 2, 
+    input_or_sync_cell = 3,
+    sync_cursors = 4,
+    sync_cursors_delete = 5,
+    unknown 
+};
+
 
 pub const MsgInput = struct {
     pos: @Vector(2, u32),
@@ -22,7 +35,7 @@ pub fn msg_sync_cell(c: *client.Client, pos: @Vector(2, u32), value: game.Cell) 
     var buffer = std.ArrayList(u8).init(c.allocator);
     defer buffer.deinit();
     var writer = buffer.writer();
-    try writer.writeByte(@intFromEnum(client.MsgID.input_or_sync_cell));
+    try writer.writeByte(@intFromEnum(MsgID.input_or_sync_cell));
     try writer.writeInt(u32, pos[0], .little);
     try writer.writeInt(u32, pos[1], .little);
     try writer.writeInt(u8, value.encode(), .little);
@@ -32,24 +45,105 @@ pub fn msg_sync_cell(c: *client.Client, pos: @Vector(2, u32), value: game.Cell) 
     };
 }
 
-
-pub fn msg_pong(c: *client.Client, board: *game.Board) !void {
+pub fn msg_sync_cursors(c: *client.Client, last_cursors: []const client.TrackedCursors, new_cursors: []const client.TrackedCursors) !void {
+    var same_cursors = try std.bit_set.DynamicBitSet.initEmpty(c.allocator, last_cursors.len);
+    defer same_cursors.deinit();
+    var send_cursor = try std.bit_set.DynamicBitSet.initEmpty(c.allocator, new_cursors.len);
+    defer send_cursor.deinit();
+    next_cursor: for(new_cursors, 0..) |nc, new_idx| {
+        for (last_cursors, 0..) |lc, old_idx| {
+            if (nc.client_id == lc.client_id) {
+                same_cursors.set(old_idx);
+                if (std.simd.countTrues(nc.pos == lc.pos) == 2) {
+                    continue :next_cursor; 
+                }
+            }
+        }
+        send_cursor.set(new_idx);
+    }
+    const delete_cursor = last_cursors.len - same_cursors.count();
+    if(delete_cursor == 0 and send_cursor.count() == 0) {
+        return; // No cursors to sync
+    }
     var buffer = std.ArrayList(u8).init(c.allocator);
     defer buffer.deinit();
     var writer = buffer.writer();
-    try writer.writeByte(@intFromEnum(client.MsgID.ping));
-    try writer.writeInt(u32, @bitCast(@as(f32, @floatFromInt(board.clues_completed.load(.unordered))) / @as(f32, @floatFromInt(board.clues.items.len))), .little);
+    if(delete_cursor > 0) {
+        try writer.writeByte(@intFromEnum(MsgID.sync_cursors_delete));
+        try writer.writeInt(u16, @truncate(delete_cursor), .little);
+        for(last_cursors, 0..) |lc, old_idx| {
+            if (!same_cursors.isSet(old_idx)) {
+                try writer.writeInt(u32, lc.client_id, .little);
+            }
+        }
+    } else {
+        try writer.writeByte(@intFromEnum(MsgID.sync_cursors));
+    }
+
+    const quad_pos_px = @Vector(2, i32){ @as(i32, @intCast(c.quad_rect.x * game.GRID_SIZE * game.CELL_PIXEL_SIZE)), @as(i32, @intCast(c.quad_rect.y * game.GRID_SIZE * game.CELL_PIXEL_SIZE)) };
+    try writer.writeInt(u16, @intCast(c.quad_rect.x), .little);
+    try writer.writeInt(u16, @intCast(c.quad_rect.y), .little);
+    
+    for(new_cursors, 0..) |new_c, new_idx| {
+        if (!send_cursor.isSet(new_idx)) continue;
+        try writer.writeInt(u32, new_c.client_id, .little);
+        try writer.writeInt(i16, @as(i16, @truncate(@as(i32, @intCast(new_c.pos[0])) - quad_pos_px[0])), .little);
+        try writer.writeInt(i16, @as(i16, @truncate(@as(i32, @intCast(new_c.pos[1])) - quad_pos_px[1])), .little);
+    }
+    
     client.WebsocketHandler.write(c.handle, buffer.items, false) catch |err| {
         std.log.err("Failed to write message: {any}", .{err});
         return err;
     };
 }
 
+pub fn msg_parse_view(reader: std.io.AnyReader) !struct {
+    cell_rect: rect.Rect,
+    cursor_pos: @Vector(2, u32),
+}{
+    const x = try reader.readInt(u16, .little);
+    const y = try reader.readInt(u16, .little);
+    const width = try reader.readInt(u16, .little);
+    const height = try reader.readInt(u16, .little);
+    const cursor_x = try reader.readInt(u32, .little);
+    const cursor_y = try reader.readInt(u32, .little);
+
+    return .{
+        .cell_rect = rect.create(x, y, width, height),
+        .cursor_pos = .{ cursor_x, cursor_y },
+    }; 
+}
+
+pub fn msg_ready(c: *client.Client) !void {
+    var buffer = std.ArrayList(u8).init(c.allocator);
+    defer buffer.deinit();
+    var writer = buffer.writer();
+    try writer.writeByte(@intFromEnum(MsgID.ready));
+    try writer.writeInt(u32, game.state.board.size[0], .little);
+    try writer.writeInt(u32, game.state.board.size[1], .little);
+    client.WebsocketHandler.write(c.handle, buffer.items, false) catch |err| {
+        std.log.err("Failed to write message: {any}", .{err});
+        return err;
+    };
+}
+
+//pub fn msg_pong(c: *client.Client, board: *game.Board) !void {
+//    var buffer = std.ArrayList(u8).init(c.allocator);
+//    defer buffer.deinit();
+//    var writer = buffer.writer();
+//    try writer.writeByte(@intFromEnum(client.MsgID.ping));
+//    try writer.writeInt(u32, @bitCast(@as(f32, @floatFromInt(board.clues_completed.load(.unordered))) / @as(f32, @floatFromInt(board.clues.items.len))), .little);
+//    client.WebsocketHandler.write(c.handle, buffer.items, false) catch |err| {
+//        std.log.err("Failed to write message: {any}", .{err});
+//        return err;
+//    };
+//}
+
 pub fn msg_sync_block(c: *client.Client, quad: *game.Quad) !void {
     var buffer = std.ArrayList(u8).init(c.allocator);
     defer buffer.deinit();
     var writer = buffer.writer();
-    try writer.writeByte(@intFromEnum(client.MsgID.sync_block));
+    try writer.writeByte(@intFromEnum(MsgID.sync_block));
     try writer.writeInt(u32, quad.x, .little);
     try writer.writeInt(u32, quad.y, .little);
     var i: usize = 0;

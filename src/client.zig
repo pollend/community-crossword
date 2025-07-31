@@ -4,44 +4,68 @@ const WebSockets = zap.WebSockets;
 const game = @import("game.zig");
 const rect = @import("rect.zig");
 const net = @import("net.zig");
+const resiliance = @import("resiliance.zig");
 
 pub const WebsocketHandler = WebSockets.Handler(Client);
 
-pub const MsgID = enum(u8) { 
-    ready = 0, 
-    set_view = 1, 
-    sync_block = 2, 
-    input_or_sync_cell = 3,
-    ping = 4,
-    unknown };
-
 pub const Client = @This();
+pub const InputRateLimiter = resiliance.rate_limiter(15, 5 * std.time.ms_per_s, 10 * std.time.ms_per_s);
+
+pub const TrackedCursors = struct {
+    client_id: u32,
+    pos: @Vector(2, u32),
+};
+pub fn tracked_cursor_order(client_id: u32, a: TrackedCursors) std.math.Order{
+    if (a.client_id == client_id) {
+        return .eq;
+    } else if (a.client_id < client_id) {
+        return .lt;
+    } else {
+        return .gt;
+    }
+} 
+
+pub fn less_than_cursor(_: void, a: TrackedCursors, b: TrackedCursors) bool {
+    return a.client_id < b.client_id;
+}
+
+pub fn is_cursor_within_view(cell_rect: rect.Rect, pos: @Vector(2, u32)) bool {
+    return rect.contains_point(cell_rect, pos / @Vector(2, u32){game.CELL_PIXEL_SIZE, game.CELL_PIXEL_SIZE});
+}
 
 lock: std.Thread.Mutex,
-channel: []const u8,
 handle: WebSockets.WsHandle,
 settings: WebsocketHandler.WebSocketSettings,
 cell_rect: rect.Rect, // The region of the board that the client is currently viewing
 quad_rect: rect.Rect, // The quad region that the client is subscribed to
 ready: bool,
 allocator: std.mem.Allocator,
+tracked_cursors_pos: std.ArrayList(TrackedCursors),
 
-last_ping: i64 = 0, // Timestamp of the last ping sent from the client 
+client_id: u32 = 0, // Unique identifier for the client
+cursor_pos: @Vector(2, u32) = .{0,0},
+active_timestamp: i64 = 0, // Timestamp of the last activity from the client
+
+input_rate_limiter: InputRateLimiter = .{},
+
+
+
 pub fn upgrade(allocator: std.mem.Allocator, r: zap.Request) !*Client {
     game.state.client_lock.lock();
     defer game.state.client_lock.unlock();
     const client = try game.state.gpa.create(Client);
     errdefer client.deinit();
-    const client_channel = try std.fmt.allocPrint(allocator, "c-{any}", .{game.state.client_id});
     game.state.client_id += 1;
 
     client.* = .{
         .lock = .{},
+        .active_timestamp = std.time.timestamp(),
         .allocator = allocator,
-        .channel = client_channel,
         .handle = undefined,
+        .client_id = game.state.client_id, 
         .cell_rect = rect.empty(),
         .quad_rect = rect.empty(),
+        .tracked_cursors_pos = std.ArrayList(TrackedCursors).init(allocator),
         .settings = .{ .on_open = on_open_websocket, .on_close = on_close_websocket, .on_message = on_message_websocket, .context = client },
         .ready = false,
     };
@@ -53,12 +77,13 @@ pub fn upgrade(allocator: std.mem.Allocator, r: zap.Request) !*Client {
 pub fn deinit(self: *Client) void {
     self.lock.lock();
     defer self.lock.unlock();
+    self.tracked_cursors_pos.deinit();
     game.state.board.unregister_client_board(self, self.quad_rect);
-    self.allocator.free(self.channel);
 }
 
 fn on_close_websocket(client: ?*Client, _: isize) !void {
     if (client) |c| {
+        std.log.info("Client {any} disconnected", .{c.client_id});
         game.state.client_lock.lock();
         defer game.state.client_lock.unlock();
         var i: usize = 0;
@@ -73,26 +98,6 @@ fn on_close_websocket(client: ?*Client, _: isize) !void {
     }
 }
 
-pub fn msg_parse_view(reader: std.io.AnyReader) !rect.Rect {
-    const x = try reader.readInt(u32, .little);
-    const y = try reader.readInt(u32, .little);
-    const width = try reader.readInt(u32, .little);
-    const height = try reader.readInt(u32, .little);
-    return rect.create(x, y, width, height);
-}
-
-pub fn msg_ready(client: *Client) !void {
-    var buffer = std.ArrayList(u8).init(client.allocator);
-    defer buffer.deinit();
-    var writer = buffer.writer();
-    try writer.writeByte(@intFromEnum(MsgID.ready));
-    try writer.writeInt(u32, game.state.board.size[0], .little);
-    try writer.writeInt(u32, game.state.board.size[1], .little);
-    WebsocketHandler.write(client.handle, buffer.items, false) catch |err| {
-        std.log.err("Failed to write message: {any}", .{err});
-        return err;
-    };
-}
 
 fn contains_simd2(a: []const @Vector(2, u32), b: @Vector(2, u32)) bool {
     for (a) |item| {
@@ -103,27 +108,6 @@ fn contains_simd2(a: []const @Vector(2, u32), b: @Vector(2, u32)) bool {
     return false;
 }
 
-const BoardIterMsgLocking = game.BoardIter(
-    void,
-    __client_locking_enter,
-    __client_locking_exit,
-);
-
-fn __client_locking_enter(
-    _: *void,
-    quad: *game.Quad,
-) void {
-    quad.client_lock.lockShared();
-    quad.lock.lockShared();
-}
-
-fn __client_locking_exit(
-    _: *void,
-    quad: *game.Quad,
-) void {
-    quad.lock.unlockShared();
-    quad.client_lock.unlockShared();
-}
 
 fn on_message_websocket(
     client: ?*Client,
@@ -137,17 +121,24 @@ fn on_message_websocket(
 
         var stream = std.io.fixedBufferStream(buffer);
         var reader = stream.reader();
-        const msg_id = reader.readEnum(MsgID, .little) catch |err| {
+        const msg_id = reader.readEnum(net.MsgID, .little) catch |err| {
             std.log.err("Failed to read message type: {any}", .{err});
             return;
         };
-        std.log.debug("on_message: {any} client {s}", .{ msg_id, c.channel });
         switch (msg_id) {
             .set_view => {
                 const board = &game.state.board;
-                c.cell_rect = try msg_parse_view(reader.any());
                 const quad_last_rect = c.quad_rect;
-                c.quad_rect = game.map_to_quad(c.cell_rect);
+                const msg  = try net.msg_parse_view(reader.any());
+                const quad_rect = game.map_to_quad(msg.cell_rect);
+                if(quad_rect.width * quad_rect.height > 4) {
+                    std.log.warn("Client view is too large: {any}", .{quad_rect});
+                    return;
+                }
+                c.cursor_pos = msg.cursor_pos;
+                c.cell_rect = msg.cell_rect; 
+                c.quad_rect = quad_rect;
+                c.active_timestamp = std.time.timestamp();
                 game.state.board.update_client_rect(c, quad_last_rect, c.quad_rect);
                 var iter = c.quad_rect.iterator();
                 while (iter.next()) |pos| {
@@ -156,16 +147,18 @@ fn on_message_websocket(
                     if(game.to_quad_index(pos, game.to_quad_size(board.size))) |update_quad_idx| {
                         board.quads[update_quad_idx].lock.lockShared();
                         defer board.quads[update_quad_idx].lock.unlockShared();
-                        try net.msg_sync_block(c, &board.quads[update_quad_idx]); // Sync the first block of the quad
+                        try net.msg_sync_block(c, &board.quads[update_quad_idx]);
                     }
                 }
             },
-            .ping => {
-                const board = &game.state.board;
-                c.last_ping = std.time.milliTimestamp();
-                try net.msg_pong(c, board);
-            },
             .input_or_sync_cell => {
+                // rate limiting inputs
+                if(!c.input_rate_limiter.input(1)) {
+                    std.log.warn("Client {any} is sending inputs too fast, ignoring input", .{c.client_id});
+                    return;
+                }
+                c.active_timestamp = std.time.timestamp();
+
                 const board = &game.state.board;
                 const input = try net.msg_parse_input(reader.any());
                 if(game.to_quad_index(game.map_to_quad_pos(input.pos), game.to_quad_size(board.size))) |update_quad_idx| {
@@ -246,12 +239,9 @@ fn on_message_websocket(
 
 fn on_open_websocket(client: ?*Client, handle: WebSockets.WsHandle) !void {
     if (client) |c| {
-        const board = &game.state.board;
         c.handle = handle;
         c.ready = true;
-        try msg_ready(c);
-        try net.msg_pong(c, board);
-        std.log.info("WebSocket connection opened for client: {s}", .{c.channel});
+        try net.msg_ready(c);
     } else {
         std.log.warn("WebSocket connection opened without a client context", .{});
     }

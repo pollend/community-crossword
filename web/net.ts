@@ -1,15 +1,16 @@
-import { Rectangle } from "pixi.js";
+import { Point, Rectangle } from "pixi.js";
 import { Clue, NetSyncBlock } from "./types";
-import { GRID_SIZE } from "./constants";
+import { GRID_SIZE, GRID_CELL_PX } from "./constants";
 
 const lastSyncedView = new Rectangle(0, 0, 0, 0);
-
+const lastCursorPosition = new Point(0, 0);
 export enum MessageID {
   ready = 0,
   set_view = 1,
   sync_block = 2,
-  sync_input_cell = 3,
-  ping = 4,
+  input_or_sync_cell = 3,
+  sync_cursors = 4,
+  sync_cursors_delete = 5,
 }
 
 export enum Value {
@@ -215,6 +216,56 @@ export function netParseCell(view: DataView, offset: number) {
   };
 }
 
+export interface TrackedCursor {
+  clientId: number;
+  pos: Point;
+}
+
+export function netParseSyncCursors(
+  view: DataView,
+  offset: number,
+  delete_cursors: boolean,
+): {
+  del: number[];
+  new: TrackedCursor[];
+} {
+  const del: number[] = [];
+  if (delete_cursors) {
+    const num = view.getUint16(offset, true);
+    offset += 2;
+    for (let i = 0; i < num; i++) {
+      del.push(view.getUint32(offset, true));
+      offset += 4;
+    }
+  }
+
+  const quadX = view.getUint16(offset, true);
+  offset += 2;
+  const quadY = view.getUint16(offset, true);
+  offset += 2;
+
+  const cursors: TrackedCursor[] = [];
+  const quadPosX = quadX * GRID_SIZE * GRID_CELL_PX;
+  const quadPosY = quadY * GRID_SIZE * GRID_CELL_PX;
+  while (offset < view.byteLength) {
+    const clientId = view.getUint32(offset, true);
+    offset += 4;
+    const relativeX = view.getInt16(offset, true);
+    offset += 2;
+    const relativeY = view.getInt16(offset, true);
+    offset += 2;
+    cursors.push({
+      clientId,
+      pos: new Point(quadPosX + relativeX, quadPosY + relativeY),
+    });
+  }
+
+  return {
+    del: del,
+    new: cursors,
+  };
+}
+
 export function netParseReady(view: DataView, offset: number) {
   const width = view.getUint32(offset, true);
   offset += 4;
@@ -280,7 +331,7 @@ export function netSendCell(ws: WebSocket, x: number, y: number, value: Value) {
   const buffer = new ArrayBuffer(1 + 4 + 4 + 1);
   let offset = 0;
   const view = new DataView(buffer);
-  view.setUint8(offset, MessageID.sync_input_cell);
+  view.setUint8(offset, MessageID.input_or_sync_cell);
   offset += 1;
   view.setUint32(offset, x, true);
   offset += 4;
@@ -290,15 +341,15 @@ export function netSendCell(ws: WebSocket, x: number, y: number, value: Value) {
   ws.send(buffer);
 }
 
-export function netSendPing(ws: WebSocket) {
-  // 1 byte for ID
-  const buffer = new ArrayBuffer(1);
-  const view = new DataView(buffer);
-  let offset = 0;
-  view.setUint8(offset, MessageID.ping);
-  offset += 1;
-  ws.send(buffer);
-}
+//export function netSendPing(ws: WebSocket) {
+//  // 1 byte for ID
+//  const buffer = new ArrayBuffer(1);
+//  const view = new DataView(buffer);
+//  let offset = 0;
+//  view.setUint8(offset, MessageID.ping);
+//  offset += 1;
+//  ws.send(buffer);
+//}
 
 export function netSendViewRect(
   ws: WebSocket,
@@ -306,29 +357,38 @@ export function netSendViewRect(
   y: number,
   width: number,
   height: number,
+  cursor: Point,
 ) {
   if (
     lastSyncedView.x === x &&
     lastSyncedView.y === y &&
     lastSyncedView.width === width &&
-    lastSyncedView.height === height
+    lastSyncedView.height === height &&
+    lastCursorPosition.x === cursor.x &&
+    lastCursorPosition.y === cursor.y
   ) {
     return;
   }
   lastSyncedView.set(x, y, width, height);
+  lastCursorPosition.set(cursor.x, cursor.y);
 
   // 1 byte for ID, 4 bytes each for x, y, width, height
-  const buffer = new ArrayBuffer(1 + 4 + 4 + 4 + 4);
+  const buffer = new ArrayBuffer(1 + 2 + 2 + 2 + 2 + 4 + 4);
   let offset = 0;
   const view = new DataView(buffer);
   view.setUint8(offset, MessageID.set_view);
   offset += 1;
-  view.setUint32(offset, Math.max(0, x), true);
+  view.setUint16(offset, Math.max(0, x), true);
+  offset += 2;
+  view.setUint16(offset, Math.max(0, y), true);
+  offset += 2;
+  view.setUint16(offset, Math.max(0, width), true);
+  offset += 2;
+  view.setUint16(offset, Math.max(0, height), true);
+  offset += 2;
+  view.setUint32(offset, Math.max(cursor.x, 0), true);
   offset += 4;
-  view.setUint32(offset, Math.max(0, y), true);
+  view.setUint32(offset, Math.max(cursor.y, 0), true);
   offset += 4;
-  view.setUint32(offset, Math.max(0, width), true);
-  offset += 4;
-  view.setUint32(offset, Math.max(0, height), true);
   ws.send(buffer);
 }

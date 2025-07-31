@@ -1,4 +1,5 @@
 <script lang="ts">
+
   import { onDestroy, onMount } from "svelte";
   import {
     Application,
@@ -8,6 +9,7 @@
     Point,
     Rectangle,
   } from "pixi.js";
+
   import {
     cellToValue,
     charToValue,
@@ -16,17 +18,23 @@
     netParseCell,
     netParseReady,
     netParseSyncChunk,
+    netParseSyncCursors,
     netSendCell,
     netSendViewRect,
-    netSendPing,
-    Value,
-    netParsePong,
+    Value
   } from "./net";
   import { Quad } from "./quad";
   import { graphicDrawRect } from "./graphic";
-  import { Throttle } from "./timing";
+  import { Debounce, Throttle } from "./timing";
   import { Direction, type Clue, MouseState } from "./types";
   import { GRID_CELL_PX, GRID_SIZE } from "./constants";
+  import 'pixi.js/math-extras';
+
+  interface CursorState {
+    clientId: number;
+    positions: Point[];
+    t: number;
+  };
 
   let frame: HTMLDivElement | undefined = $state.raw(undefined);
   let app: Application = new Application();
@@ -34,11 +42,14 @@
   let socket: WebSocket | undefined = undefined;
 
   let mouse: MouseState = MouseState.None;
+  let cursorPos = new Point(0, 0);
   let topLeftPosition = new Point(0, 0);
   let dragStartPosition = new Point(0, 0);
   let stageDragPosition = new Point(0, 0);
   let quads: Quad[] = [];
   let progress: number = $state(0);
+  let disconnected: boolean = $state(false);
+  let otherPlayerCursors: CursorState[] = [];
 
   let highlightSlotsVertical: number[] = $state([]);
   let highlightSlotHorizontal: number[] = $state([]);
@@ -124,7 +135,7 @@
     const y = Math.floor(view.y / GRID_CELL_PX);
     const width = Math.floor((view.width + view.x) / GRID_CELL_PX) - x;
     const height = Math.floor((view.height + view.y) / GRID_CELL_PX) - y;
-    netSendViewRect(socket!, x, y, width, height);
+    netSendViewRect(socket!, x, y, width, height, cursorPos);
   });
 
   let boardSize = new Point(0, 0);
@@ -237,7 +248,7 @@
           syncViewThrottle.trigger();
           break;
         }
-        case MessageID.sync_input_cell: {
+        case MessageID.input_or_sync_cell: {
           const cell = netParseCell(view, offset);
           const quadX = Math.floor(cell.x / GRID_SIZE);
           const quadY = Math.floor(cell.y / GRID_SIZE);
@@ -259,29 +270,54 @@
             syncBlock.block,
           );
           quads.push(q);
+          q.container.zIndex = 2;
           mainStage.addChild(q.container);
           refreshQuads.trigger();
           break;
         }
-        case MessageID.ping: {
-          const payload = netParsePong(view, offset);
-          progress = payload.percentage * 100.0; 
+        case MessageID.sync_cursors_delete: 
+        case MessageID.sync_cursors: {
+          const net_cursors = netParseSyncCursors(view, offset, msgid === MessageID.sync_cursors_delete);
+          for(const id of net_cursors.del) {
+            const idx = otherPlayerCursors.findIndex(c => c.clientId === id);
+            if(idx >= 0) {
+              otherPlayerCursors.splice(idx, 1);
+            }
+          }
+          for(const net of net_cursors.new) {
+            const existingCursor = otherPlayerCursors.find(c => c.clientId=== net.clientId);
+            if(existingCursor) {
+              existingCursor.positions.push(net.pos.clone());
+              // Keep only the last few positions for pathfinding
+              if(existingCursor.positions.length > 5) {
+                existingCursor.positions = existingCursor.positions.slice(-5);
+              }
+            } else {
+              const startPos = net.pos.clone();
+              otherPlayerCursors.push({
+                clientId: net.clientId,
+                positions: [startPos],
+                t: 0,
+              });
+            }
+          }
           break;
         }
       }
     };
-    let pingTimeout: number | undefined = undefined;
-    pingTimeout = setTimeout(() => {
-      if (socket && socket.readyState === WebSocket.OPEN) {
-        netSendPing(socket);
-      }
-    }, 5000);
+    //let pingTimeout: number | undefined = undefined;
+    //pingTimeout = setTimeout(() => {
+    //  if (socket && socket.readyState === WebSocket.OPEN) {
+    //    netSendPing(socket);
+    //  }
+    //}, 5000);
 
     socket.onclose = function () {
-      if (pingTimeout) {
-        clearTimeout(pingTimeout);
-        pingTimeout = undefined;
-      }
+      disconnected = true;
+    //  if (pingTimeout) {
+    //    clearTimeout(pingTimeout);
+    //    pingTimeout = undefined;
+    //  }
     };
 
     socket.onopen = function () {
@@ -290,10 +326,16 @@
     // ----------------------------------------------------
     const graphicContainer = new Graphics();
     const backGraphics = new Graphics();
+    const frontGraphics = new Graphics();
     app.stage.eventMode = "static";
+
     app.stage.addChild(graphicContainer);
     app.stage.addChild(mainStage);
     mainStage.addChild(backGraphics);
+
+    mainStage.addChild(frontGraphics)
+    frontGraphics.zIndex = 10;
+    mainStage.sortableChildren = true;
 
     document.addEventListener("keydown", (event) => {
       const value = charToValue(event.key);
@@ -415,6 +457,14 @@
 
         mouse = MouseState.None;
       }
+      const mouseDebonce = new Debounce(200, () => {
+        syncViewThrottle.trigger(); 
+      });
+      app.stage.on("pointermove", (event) => {
+        cursorPos.set(topLeftPosition.x + stageDragPosition.x + event.global.x, 
+                      topLeftPosition.y + stageDragPosition.y + event.global.y);
+        mouseDebonce.trigger();
+      });
       app.stage.on("pointerupoutside", onBoardDragEnd);
       app.stage.on("pointerup", onBoardDragEnd);
       app.stage.on("pointerdown", (event) => {
@@ -434,6 +484,28 @@
         new Rectangle(0, 0, size.x, size.y),
       ).fill(0xffffff);
       backGraphics.clear();
+      frontGraphics.clear();
+      // render other player cursors as bees
+      {
+        for (let i = otherPlayerCursors.length - 1; i >= 0; i--) {
+          const cursor = otherPlayerCursors[i];
+
+          let position = cursor.positions[0].clone();
+          if (cursor.positions.length > 1) {
+            cursor.t = Math.min(1, cursor.t + app.ticker.deltaTime * 0.1);
+            position.set(cursor.positions[0].x + (cursor.positions[1].x - cursor.positions[0].x) * cursor.t,
+            cursor.positions[0].y + (cursor.positions[1].y - cursor.positions[0].y) * cursor.t)
+          }
+          if(cursor.t >= 1) {
+            cursor.t = 0;
+            cursor.positions.shift();
+          }
+          frontGraphics
+            .circle(position.x, position.y, 8)
+            .fill(0xffd700); // Golden yellow
+        }
+      }
+
       const center = selection.center;
       if (center) {
         let x0 = center.x;
@@ -574,6 +646,27 @@
     return "";
   });
 </script>
+
+{#if disconnected}
+  <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+    <div class="bg-white rounded-lg p-6 max-w-md mx-4 shadow-xl">
+      <div class="text-center">
+        <div class="text-6xl mb-4">🔌</div>
+        <h2 class="text-2xl font-bold text-gray-800 mb-3">Connection Lost</h2>
+        <p class="text-gray-600 mb-6">
+          The connection to the server has been lost. Please check your internet connection and try again.
+        </p>
+        <button 
+          class="bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-6 rounded-lg transition-colors"
+          on:click={() => location.reload()}
+        >
+          Reconnect
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 
 <div class="container mx-auto flex sm:w-full">
   <div class="flex-4 flex flex-col">

@@ -5,6 +5,7 @@ const WebSockets = zap.WebSockets;
 const game = @import("game.zig");
 const rect = @import("rect.zig");
 const aws = @import("aws");
+const net = @import("net.zig");
 const WebsocketHandler = WebSockets.Handler(client.Client);
 
 const stb_writer = @cImport({
@@ -19,6 +20,8 @@ pub const GRID_SIZE: u32 = 16;
 pub const GRID_LEN: u32 = GRID_SIZE * GRID_SIZE;
 pub const BACKUP_TIME_STAMP: i64 = std.time.s_per_min * 30;
 pub const MAP_GENERATION_TIME: i64 = std.time.s_per_min * 60; 
+pub const INACTIVE_TIMEOUT: i64 = std.time.s_per_min * 5; 
+pub const CELL_PIXEL_SIZE: u32 = 80;
 
 pub const MAP_MAGIC_NUMBER: u32 = 0x1F9F1E9f; 
 pub const MAP_CACHE_MAGIC_NUMBER: u32 = 0x1F9F1E9c; // Different magic number for cache
@@ -695,6 +698,111 @@ pub const Board = struct {
     }
 };
 
+fn background_write_map() void {
+    var img_buf = state.gpa.alloc(u8, state.board.size[0] * state.board.size[1] * 4) catch |err| {
+        std.log.err("Failed to allocate image buffer: {any}", .{err});
+        return;
+    };
+    defer state.gpa.free(img_buf);
+    for(state.board.quads) |*quad| {
+        quad.lock.lockShared();
+        defer quad.lock.unlockShared();
+
+        const pos = @Vector(2, u32){quad.x, quad.y} * @Vector(2, u32){GRID_SIZE, GRID_SIZE};
+        for (quad.input, 0..) |cell, cell_index| {
+            const offset_pos = @Vector(2, u32){@as(u32,@intCast(cell_index)) % GRID_SIZE, @as(u32,@intCast(cell_index)) / GRID_SIZE}; 
+            const cell_pos = pos + offset_pos;
+            const pix_start = (cell_pos[1] * state.board.size[0] + cell_pos[0]) * 4;
+            var pix_color = img_buf[pix_start..pix_start + 4];
+            if(cell.lock == 1) {
+                pix_color[0] = 0;
+                pix_color[1] = 155;
+                pix_color[2] = 0;
+            } else {
+                switch (cell.value) {
+                    .black => |_| {
+                        pix_color[0] = 0;
+                        pix_color[1] = 0;
+                        pix_color[2] = 0;
+                    },
+                    else => {
+                        pix_color[0] = 255;
+                        pix_color[1] = 255;
+                        pix_color[2] = 255;
+                    },
+                }
+            }
+        }
+    }
+    if(stb_writer.stbi_write_png(
+        "dist/map.png",
+        @intCast(state.board.size[0]),
+        @intCast(state.board.size[1]),
+        4,
+        img_buf.ptr,
+        @intCast(4 * state.board.size[0])
+    ) <= 0) {
+        std.log.err("Failed to save map image", .{});
+    }
+
+}
+
+pub fn update_clients() !void {
+    state.client_lock.lock();
+    defer state.client_lock.unlock();
+    var disconnect_clients = std.ArrayList(*client.Client).init(state.gpa);
+    defer disconnect_clients.deinit();
+    
+    var visible_cursors = std.ArrayList(client.TrackedCursors).init(state.gpa);
+    defer visible_cursors.deinit();
+
+    const now = std.time.timestamp();
+    const quad_size = game.to_quad_size(state.board.size);
+    for(state.clients.items) |cur_client| {
+        visible_cursors.clearRetainingCapacity();
+        if(now - cur_client.active_timestamp >= INACTIVE_TIMEOUT) {
+            try disconnect_clients.append(cur_client); 
+            continue;
+        }
+        {
+            var client_quad_iter = cur_client.quad_rect.iterator();
+            while(client_quad_iter.next()) |pos| {
+                if (game.to_quad_index(pos, quad_size)) |idx| {
+                    const quad = &state.board.quads[idx];
+                    quad.client_lock.lockShared();
+                    defer quad.client_lock.unlockShared();
+                    next: for(quad.clients.items) |quad_client| {
+                        if(quad_client.client_id == cur_client.client_id) continue;
+                        if(client.is_cursor_within_view(cur_client.cell_rect.pad(5), quad_client.cursor_pos)) {
+                            for(visible_cursors.items) |existing_cursor| {
+                                if(existing_cursor.client_id == quad_client.client_id) {
+                                    continue :next;
+                                }
+                            }
+                            try visible_cursors.append(.{
+                                .client_id = quad_client.client_id,
+                                .pos = quad_client.cursor_pos,
+                            });
+                        }
+                    }
+                }
+            }
+            net.msg_sync_cursors(cur_client, cur_client.tracked_cursors_pos.items, visible_cursors.items) catch |err| {
+                std.log.err("Failed to sync cursors for client {d}: {any}", .{cur_client.client_id, err});
+                continue;
+            };
+            cur_client.tracked_cursors_pos.clearRetainingCapacity();
+            cur_client.tracked_cursors_pos.appendSlice(visible_cursors.items) catch |err| {
+                std.log.err("Failed to append cursors for client {d}: {any}", .{cur_client.client_id, err});
+                continue;
+            };
+        }
+    }
+
+    for(disconnect_clients.items) |c| {
+        client.WebsocketHandler.close(c.handle);
+    }
+}
 
 pub fn background_worker() void {
     while(state.running.load(.monotonic)) {
@@ -713,56 +821,14 @@ pub fn background_worker() void {
                 std.log.err("Failed to write board cache to S3: {any}", .{err});
             };
         }
-        failed_gen: {
-            if(std.time.timestamp() - state.generate_map_timestamp >= MAP_GENERATION_TIME) {
-                std.log.info("Generating crossword map...", .{});
-                state.generate_map_timestamp = std.time.timestamp();
-                var img_buf = state.gpa.alloc(u8, state.board.size[0] * state.board.size[1] * 4) catch |err| {
-                    std.log.err("Failed to allocate image buffer: {any}", .{err});
-                    break :failed_gen;
-                };
-                defer state.gpa.free(img_buf);
-                const board = &state.board;
-                for(board.quads) |quad| {
-                    const pos = @Vector(2, u32){quad.x, quad.y} * @Vector(2, u32){GRID_SIZE, GRID_SIZE};
-                    for (quad.input, 0..) |cell, cell_index| {
-                        const offset_pos = @Vector(2, u32){@as(u32,@intCast(cell_index)) % GRID_SIZE, @as(u32,@intCast(cell_index)) / GRID_SIZE}; 
-                        const cell_pos = pos + offset_pos;
-                        const pix_start = (cell_pos[1] * board.size[0] + cell_pos[0]) * 4;
-                        var pix_color = img_buf[pix_start..pix_start + 4];
-                        if(cell.lock == 1) {
-                            pix_color[0] = 0;
-                            pix_color[1] = 155;
-                            pix_color[2] = 0;
-                        } else {
-                            switch (cell.value) {
-                                .black => |_| {
-                                    pix_color[0] = 0;
-                                    pix_color[1] = 0;
-                                    pix_color[2] = 0;
-                                },
-                                else => {
-                                    pix_color[0] = 255;
-                                    pix_color[1] = 255;
-                                    pix_color[2] = 255;
-                                },
-                            }
-                        }
-                    }
-                }
-                if(stb_writer.stbi_write_png(
-                    "dist/map.png",
-                    @intCast(board.size[0]),
-                    @intCast(board.size[1]),
-                    4,
-                    img_buf.ptr,
-                    @intCast(4 * board.size[0])
-                ) <= 0) {
-                    std.log.err("Failed to save map image", .{});
-                }
-                
-            }
+        if(std.time.timestamp() - state.generate_map_timestamp >= MAP_GENERATION_TIME) {
+            std.log.info("Generating crossword map...", .{});
+            state.generate_map_timestamp = std.time.timestamp();
+            background_write_map();
         }
+        update_clients() catch |err| {
+            std.log.err("Failed to update clients: {any}", .{err});
+        };
         std.time.sleep(std.time.ns_per_ms * 200);
     }
     game.state.board.write_cache_s3(
@@ -781,7 +847,7 @@ pub fn background_worker() void {
 
 pub const State = struct {
     client_id: u32,
-    client_lock: std.Thread.Mutex = .{},
+    client_lock: std.Thread.Mutex.Recursive,
     clients: ClientArrayList,
 
     backup_timestamp: i64,
