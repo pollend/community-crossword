@@ -1,8 +1,8 @@
-name: large-word-search
+name: community-crossword
 services:
 - dockerfile_path: Dockerfile
   github:
     branch: main
     deploy_on_push: true
-    repo: pollend/large-word-search
-  name: large-word-search
+    repo: pollend/community-crossword
+  name: community-crossword

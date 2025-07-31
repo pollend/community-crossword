@@ -1,8 +1,8 @@
 spec:
-  name: large-word-search
+  name: community-crossword
   services:
   - dockerfile_path: Dockerfile
     git:
       branch: main
-      repo_clone_url: git@github.com:pollend/large-word-search.git
-    name: large-word-search
+      repo_clone_url: git@github.com:pollend/community-crossword.git
+    name: community-crossword
