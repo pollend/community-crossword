@@ -214,6 +214,7 @@ pub fn main() !void {
         .client_lock = std.Thread.Mutex.Recursive.init,
         .backup_timestamp = 0,
         .generate_map_timestamp = 0,
+        .sync_game_state_timestamp = 0, 
         .running = std.atomic.Value(bool).init(true),
 
         .crossword_cache = crossword_cache,

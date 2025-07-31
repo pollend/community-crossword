@@ -12,6 +12,7 @@ export enum MessageID {
   input_or_sync_cell = 3,
   sync_cursors = 4,
   sync_cursors_delete = 5,
+  broadcast_game_state = 6,
 }
 
 export enum Value {
@@ -203,6 +204,21 @@ export function charToValue(c: string): Value | undefined {
   return undefined;
 }
 
+export function netParseGameState(view: DataView, offset: number): {
+  num_player: number,
+  progress: number;
+} {
+  const num_players = view.getUint32(offset, true);
+  offset += 4;
+  const percent = view.getFloat32(offset, true);
+  offset += 4;
+  return {
+    num_player: num_players,
+    progress: percent,
+  };
+
+}
+
 export function netParseCell(view: DataView, offset: number) {
   const x = view.getUint32(offset, true);
   offset += 4;
@@ -345,16 +361,6 @@ export function netSendCell(ws: WebSocket, x: number, y: number, value: Value) {
   view.setUint8(offset, value);
   ws.send(buffer);
 }
-
-//export function netSendPing(ws: WebSocket) {
-//  // 1 byte for ID
-//  const buffer = new ArrayBuffer(1);
-//  const view = new DataView(buffer);
-//  let offset = 0;
-//  view.setUint8(offset, MessageID.ping);
-//  offset += 1;
-//  ws.send(buffer);
-//}
 
 export function netSendViewRect(
   ws: WebSocket,

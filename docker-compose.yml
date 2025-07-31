@@ -39,7 +39,7 @@ services:
       - ./svelte.config.js:/app/svelte.config.js:ro
       - ./eslint.config.mjs:/app/eslint.config.mjs:ro
       - ./index.html:/app/index.html:ro
-    command: sh -c "npm install && VITE_WS_URL='ws://localhost:3010' npm run dev -- --host 0.0.0.0"
+    command: sh -c "npm install && VITE_APP_URL='http://localhost:3010' VITE_WS_URL='ws://localhost:3010' npm run dev -- --host 0.0.0.0"
   minio:
     image: quay.io/minio/minio:latest
     container_name: minio_server

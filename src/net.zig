@@ -11,6 +11,7 @@ pub const MsgID = enum(u8) {
     input_or_sync_cell = 3,
     sync_cursors = 4,
     sync_cursors_delete = 5,
+    broadcast_game_state = 6,
     unknown 
 };
 
@@ -19,6 +20,20 @@ pub const MsgInput = struct {
     pos: @Vector(2, u32),
     input: game.Value,
 };
+
+pub fn msg_broadcast_game_state(c: *client.Client, board: *game.Board, num_players: usize) !void {
+    var buffer = std.ArrayList(u8).init(c.allocator);
+    defer buffer.deinit();
+    var writer = buffer.writer();
+    try writer.writeByte(@intFromEnum(MsgID.broadcast_game_state));
+    try writer.writeInt(u32, @intCast(num_players), .little);
+    try writer.writeInt(u32, 
+        @bitCast(@as(f32,@floatFromInt(board.clues_completed.load(.unordered))) / @as(f32, @floatFromInt(board.clues.items.len))), .little);
+    client.WebsocketHandler.write(c.handle, buffer.items, false) catch |err| {
+        std.log.err("Failed to write message: {any}", .{err});
+        return err;
+    };
+}
 
 pub fn msg_sync_cell(c: *client.Client, pos: @Vector(2, u32), value: game.Cell) !void {
     var buffer = std.ArrayList(u8).init(c.allocator);

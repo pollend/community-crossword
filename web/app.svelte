@@ -16,6 +16,7 @@
     isBlocked,
     MessageID,
     netParseCell,
+    netParseGameState,
     netParseReady,
     netParseSyncChunk,
     netParseSyncCursors,
@@ -48,8 +49,11 @@
   let stageDragPosition = new Point(0, 0);
   let quads: Quad[] = [];
   let progress: number = $state(0);
+  let players: number = $state(0);
   let disconnected: boolean = $state(false);
   let otherPlayerCursors: CursorState[] = [];
+  // let mapImageUrl: string = $state('');
+  // let mapRefreshKey: number = $state(0);
 
   let highlightSlotsVertical: number[] = $state([]);
   let highlightSlotHorizontal: number[] = $state([]);
@@ -298,7 +302,21 @@
     app.destroy({ removeView: true }, { children: true, texture: true });
   });
 
+  // // Function to load/refresh the map image
+  // function refreshMap() {
+  //   mapRefreshKey = Date.now(); // Add timestamp to force cache refresh
+  //   mapImageUrl = `${import.meta.env.VITE_APP_URL}/map.png?t=${mapRefreshKey}`;
+  // }
+
+  // Set up automatic map refresh every 30 minutes
+  // let mapRefreshInterval: number;
+
   onMount(async () => {
+    // // Load initial map
+    // refreshMap();
+    
+    // // Set up refresh interval (30 minutes = 1800000ms)
+    // mapRefreshInterval = setInterval(refreshMap, 1800000);
     await app.init({ background: "#FFFFFF", resizeTo: frame });
     frame!.appendChild(app.canvas);
 
@@ -339,6 +357,12 @@
             quad.cells[index] = cell.value;
             quad.update();
           }
+          break;
+        }
+        case MessageID.broadcast_game_state: {
+          const msg = netParseGameState(view, offset);
+          progress = msg.progress * 100.0;
+          players = msg.num_player;
           break;
         }
         case MessageID.sync_block: {
@@ -737,7 +761,7 @@
         </p>
         <button 
           class="bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-6 rounded-lg transition-colors"
-          on:click={() => location.reload()}
+          onclick={() => location.reload()}
         >
           Reconnect
         </button>
@@ -746,25 +770,28 @@
   </div>
 {/if}
 
-
 <div class="container mx-auto flex sm:w-full">
   <div class="flex-4 flex flex-col">
-    <div class="mb-3 px-4">
-      <div class="flex justify-between items-center mb-2">
-        <span class="text-sm font-medium text-gray-700">Puzzle Progress</span>
-        <span class="text-sm font-medium text-gray-700">{Math.round(progress)}%</span>
+    <div class="mb-3 flex">
+      <div class="w-10 flex m-auto items-center">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-person-arms-up" viewBox="0 0 16 16">
+          <path d="M8 3a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3"/>
+          <path d="m5.93 6.704-.846 8.451a.768.768 0 0 0 1.523.203l.81-4.865a.59.59 0 0 1 1.165 0l.81 4.865a.768.768 0 0 0 1.523-.203l-.845-8.451A1.5 1.5 0 0 1 10.5 5.5L13 2.284a.796.796 0 0 0-1.239-.998L9.634 3.84a.7.7 0 0 1-.33.235c-.23.074-.665.176-1.304.176-.64 0-1.074-.102-1.305-.176a.7.7 0 0 1-.329-.235L4.239 1.286a.796.796 0 0 0-1.24.998l2.5 3.216c.317.316.475.758.43 1.204Z"/>
+        </svg>
+        {players}
       </div>
-      <div class="w-full bg-gray-200 rounded-full h-3">
-        <div 
-          class="bg-green-500 h-3 rounded-full transition-all duration-300 ease-out"
-          style="width: {progress}%"
-        ></div>
-      </div>
-      {#if progress === 100}
-        <div class="text-center mt-2 text-green-600 font-bold animate-pulse">
-          🎉 Puzzle Complete! 🎉
+      <div class="flex-auto">
+        <div class="flex justify-between items-center mb-2">
+          <span class="text-sm font-medium text-gray-700">Puzzle Progress</span>
+          <span class="text-sm font-medium text-gray-700">{Math.round(progress)}%</span>
         </div>
-      {/if}
+        <div class="w-full bg-gray-200 h-3">
+          <div 
+            class="bg-green-500 h-3 transition-all duration-300 ease-out"
+            style="width: {progress}%"
+          ></div>
+        </div>
+      </div>
     </div>
     
     <div class="bg-sky-300 items-center justify-center text-black text-center mb-3 p-4">
@@ -774,7 +801,6 @@
         ???
       {/if}
     </div>
-    
   
     <div class="aspect-square overflow-hidden border-black border-2" bind:this={frame}></div>
   </div>
@@ -792,7 +818,7 @@
                   "!border-sky-300": selectionDir === Direction.Vertical && verticalSelection,
                   "bg-sky-300": selectionDir === Direction.Horizontal && verticalSelection,
                 }}
-                on:click={() => {
+                onclick={() => {
                    (selection.center = clue.pos) && (selectionDir = Direction.Horizontal);
                 }}
               >
@@ -814,7 +840,7 @@
                   "!border-sky-300": selectionDir === Direction.Horizontal && horizontalSelection >= 0,
                   "bg-sky-300": selectionDir === Direction.Vertical && horizontalSelection >= 0,
                 }}
-                on:click={() => {
+                onclick={() => {
                    (selection.center = clue.pos) && (selectionDir = Direction.Vertical);
                 }}
               >
@@ -825,6 +851,25 @@
         </div>
       </div>
     </div>
+    
+    <!-- <div class="m-3">
+      <h3 class="text-xl font-bold border-b-1 border-gray-200 mb-2">Puzzle Map</h3>
+      <div class="relative bg-gray-100 rounded-lg p-2">
+        {#if mapImageUrl}
+          <img 
+            src={mapImageUrl} 
+            alt="Puzzle Progress Map" 
+            style="image-rendering: pixelated;image-rendering: -moz-crisp-edges; image-rendering: -webkit-optimize-contrast;"
+            class="w-full h-auto max-h-48 object-contain rounded"
+            loading="lazy"
+          />
+        {:else}
+          <div class="w-full h-24 bg-gray-200 rounded flex items-center justify-center text-gray-500">
+            Loading map...
+          </div>
+        {/if}
+      </div>
+    </div> -->
   </div>
 </div>
 

@@ -66,7 +66,11 @@ pub fn upgrade(allocator: std.mem.Allocator, r: zap.Request) !*Client {
         .cell_rect = rect.empty(),
         .quad_rect = rect.empty(),
         .tracked_cursors_pos = std.ArrayList(TrackedCursors).init(allocator),
-        .settings = .{ .on_open = on_open_websocket, .on_close = on_close_websocket, .on_message = on_message_websocket, .context = client },
+        .settings = .{ 
+            .on_open = on_open_websocket, 
+            .on_close = on_close_websocket,
+            .on_message = on_message_websocket, 
+            .context = client },
         .ready = false,
     };
     try WebsocketHandler.upgrade(r.h, &client.settings);
@@ -81,7 +85,9 @@ pub fn deinit(self: *Client) void {
     game.state.board.unregister_client_board(self, self.quad_rect);
 }
 
+
 fn on_close_websocket(client: ?*Client, _: isize) !void {
+    std.log.info("Disconnection", .{});
     if (client) |c| {
         std.log.info("Client {any} disconnected", .{c.client_id});
         game.state.client_lock.lock();
@@ -90,6 +96,7 @@ fn on_close_websocket(client: ?*Client, _: isize) !void {
         while (i < game.state.clients.items.len) : (i += 1) {
             if (game.state.clients.items[i] == c) {
                 _ = game.state.clients.swapRemove(i);
+                std.log.debug("Remove client from index {d}", .{i});
                 break;
             }
         }
@@ -240,6 +247,9 @@ fn on_open_websocket(client: ?*Client, handle: WebSockets.WsHandle) !void {
         c.handle = handle;
         c.ready = true;
         try net.msg_ready(c);
+        game.state.client_lock.lock();
+        defer game.state.client_lock.unlock();
+        try net.msg_broadcast_game_state(c, &game.state.board, game.state.clients.items.len);
     } else {
         std.log.warn("WebSocket connection opened without a client context", .{});
     }

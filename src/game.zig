@@ -19,7 +19,8 @@ pub const assert = std.debug.assert;
 pub const GRID_SIZE: u32 = 16;
 pub const GRID_LEN: u32 = GRID_SIZE * GRID_SIZE;
 pub const BACKUP_TIME_STAMP: i64 = std.time.s_per_min * 30;
-pub const MAP_GENERATION_TIME: i64 = std.time.s_per_min * 60; 
+pub const MAP_GENERATION_TIME: i64 = std.time.s_per_min * 60;
+pub const SYNC_GAME_STATE_TIME: i64 = std.time.s_per_min * 1;
 pub const INACTIVE_TIMEOUT: i64 = std.time.s_per_min * 5; 
 pub const CELL_PIXEL_SIZE: u32 = 80;
 
@@ -747,6 +748,7 @@ fn background_write_map() void {
 
 }
 
+
 pub fn update_clients() !void {
     state.client_lock.lock();
     defer state.client_lock.unlock();
@@ -821,6 +823,17 @@ pub fn background_worker() void {
                 std.log.err("Failed to write board cache to S3: {any}", .{err});
             };
         }
+        if(std.time.timestamp() - state.sync_game_state_timestamp >= SYNC_GAME_STATE_TIME) {
+            std.log.info("Syncing game state...", .{});
+            state.sync_game_state_timestamp = std.time.timestamp();
+            state.client_lock.lock();
+            defer state.client_lock.unlock();
+            for(state.clients.items) |cur_client| {
+                net.msg_broadcast_game_state(cur_client, &state.board, state.clients.items.len) catch |err| {
+                    std.log.err("Failed to sync game state for client {d}: {any}", .{cur_client.client_id, err});
+                };
+            }
+        }
         if(std.time.timestamp() - state.generate_map_timestamp >= MAP_GENERATION_TIME) {
             std.log.info("Generating crossword map...", .{});
             state.generate_map_timestamp = std.time.timestamp();
@@ -852,6 +865,7 @@ pub const State = struct {
 
     backup_timestamp: i64,
     generate_map_timestamp: i64,
+    sync_game_state_timestamp: i64,
     running: std.atomic.Value(bool),
 
     crossword_map: []const u8,
