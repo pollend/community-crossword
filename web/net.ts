@@ -204,8 +204,11 @@ export function charToValue(c: string): Value | undefined {
   return undefined;
 }
 
-export function netParseGameState(view: DataView, offset: number): {
-  num_player: number,
+export function netParseGameState(
+  view: DataView,
+  offset: number,
+): {
+  num_player: number;
   progress: number;
 } {
   const num_players = view.getUint32(offset, true);
@@ -216,7 +219,6 @@ export function netParseGameState(view: DataView, offset: number): {
     num_player: num_players,
     progress: percent,
   };
-
 }
 
 export function netParseCell(view: DataView, offset: number) {
