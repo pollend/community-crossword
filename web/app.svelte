@@ -24,6 +24,7 @@
     netSendViewRect,
     Value
   } from "./net";
+  import Keyboard from "./keyboard.svelte"
   import { Quad } from "./quad";
   import { graphicDrawRect } from "./graphic";
   import { Debounce, Throttle } from "./timing";
@@ -317,6 +318,8 @@
     
     // // Set up refresh interval (30 minutes = 1800000ms)
     // mapRefreshInterval = setInterval(refreshMap, 1800000);
+    
+    
     await app.init({ background: "#FFFFFF", resizeTo: frame });
     frame!.appendChild(app.canvas);
 
@@ -550,9 +553,11 @@
                     : Direction.Horizontal;
               } else {
                 selection.center = center;
+                focusMobileInput(); // Focus mobile input when cell is selected
               }
             } else {
               selection.center = center;
+              focusMobileInput(); // Focus mobile input when cell is selected
             }
             break;
           }
@@ -872,6 +877,8 @@
     </div> -->
   </div>
 </div>
+
+<Keyboard visible={false}></Keyboard>
 
 <style lang="postcss">
   @reference "tailwindcss";
