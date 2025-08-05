@@ -5,6 +5,7 @@ const client = @import("client.zig");
 const game = @import("game.zig");
 const rect = @import("rect.zig");
 const aws = @import("aws");
+const evict_fifo = @import("evict_fifo.zig");
 
 fn on_upgrade(r: zap.Request, target_protocol: []const u8) !void {
     // make sure we're talking the right protocol
@@ -79,7 +80,6 @@ fn load_board(allocator: std.mem.Allocator, path: []const u8, board_width: *u32,
                 return err;
             },
         };
-
         const word_len = reader.readInt(u32, .little) catch |e| switch (e) {
             error.EndOfStream => break,
             else => |err| {
@@ -280,4 +280,5 @@ pub fn main() !void {
 const expect = std.testing.expect;
 test {
     _ = rect;
+    _ = evict_fifo;
 }

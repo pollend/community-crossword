@@ -58,8 +58,118 @@ pub const Value = enum(u7) {
     x,
     y,
     z,
-};
 
+    pub fn value_to_char(value: Value) u8 {
+        return switch(value) {
+            .empty => ' ',
+            .dash => '-',
+            .a => 'a',
+            .b => 'b',
+            .c => 'c',
+            .d => 'd',
+            .e => 'e',
+            .f => 'f',
+            .g => 'g',
+            .h => 'h',
+            .i => 'i',
+            .j => 'j',
+            .k => 'k',
+            .l => 'l',
+            .m => 'm',
+            .n => 'n',
+            .o => 'o',
+            .p => 'p',
+            .q => 'q',
+            .r => 'r',
+            .s => 's',
+            .t => 't',
+            .u => 'u',
+            .v => 'v',
+            .w => 'w',
+            .x => 'x',
+            .y => 'y',
+            .z => 'z',
+            else => {return ' ';}
+        };
+    }
+
+    pub fn char_to_value(c: u8) Value{
+            return switch (c) {
+                'a', 'A' => Value.a,
+                'b', 'B' => Value.b,
+                'c', 'C' => Value.c,
+                'd', 'D' => Value.d,
+                'e', 'E' => Value.e,
+                'f', 'F' => Value.f,
+                'g', 'G' => Value.g,
+                'h', 'H' => Value.h,
+                'i', 'I' => Value.i,
+                'j', 'J' => Value.j,
+                'k', 'K' => Value.k,
+                'l', 'L' => Value.l,
+                'm', 'M' => Value.m,
+                'n', 'N' => Value.n,
+                'o', 'O' => Value.o,
+                'p', 'P' => Value.p,
+                'q', 'Q' => Value.q,
+                'r', 'R' => Value.r,
+                's', 'S' => Value.s,
+                't', 'T' => Value.t,
+                'u', 'U' => Value.u,
+                'v', 'V' => Value.v,
+                'w', 'W' => Value.w,
+                'x', 'X' => Value.x,
+                'y', 'Y' => Value.y,
+                'z', 'Z' => Value.z,
+                '-', ' ' => Value.dash, // space or dash
+                else => return error.InvalidCharacter, // Invalid character
+            };
+    }
+
+    pub fn calculate_score_u8(word: []const u8) u32 {
+        var score: u32 = 0;
+        for(word) |cc| {
+            const value = char_to_value(cc) catch  {
+                continue;
+            }; 
+            if (value == Value.empty or value == Value.black) {
+                continue;
+            }
+            score += switch(value) {
+                .a, .e, .i, .o, .u, .l, .n, .s, .t, .r => 1,
+                .d, .g => 2,
+                .b, .c, .m, .p =>  3,
+                .f, .h, .v, .w, .y => 4,
+                .k =>  5,
+                .j, .x => 8,
+                .q, .z => 10,
+                else => 0 
+            };
+        }
+        return score;
+        
+    }
+
+    pub fn calculate_score(word: []Value) u32 {
+        var score: u32 = 0;
+        for(word) |value| {
+            if (value == Value.empty or value == Value.black) {
+                continue;
+            }
+            score += switch(value) {
+                .a, .e, .i, .o, .u, .l, .n, .s, .t, .r => 1,
+                .d, .g => 2,
+                .b, .c, .m, .p =>  3,
+                .f, .h, .v, .w, .y => 4,
+                .k =>  5,
+                .j, .x => 8,
+                .q, .z => 10,
+                else => 0 
+            };
+        }
+        return score;
+    }
+};
 
 pub fn to_cell_index(global_cell_pos: @Vector(2, u32)) usize {
     const local_cell_pos = global_cell_pos % @Vector(2, u32){ GRID_SIZE, GRID_SIZE };
@@ -824,21 +934,20 @@ pub fn background_worker() void {
             };
         }
         if(std.time.timestamp() - state.sync_game_state_timestamp >= SYNC_GAME_STATE_TIME) {
-            std.log.info("Syncing game state...", .{});
             state.sync_game_state_timestamp = std.time.timestamp();
             state.client_lock.lock();
             defer state.client_lock.unlock();
             for(state.clients.items) |cur_client| {
-                net.msg_broadcast_game_state(cur_client, &state.board, state.clients.items.len) catch |err| {
+                net.msg_broadcast_game_state(cur_client, &state.board) catch |err| {
                     std.log.err("Failed to sync game state for client {d}: {any}", .{cur_client.client_id, err});
                 };
             }
         }
-        if(std.time.timestamp() - state.generate_map_timestamp >= MAP_GENERATION_TIME) {
-            std.log.info("Generating crossword map...", .{});
-            state.generate_map_timestamp = std.time.timestamp();
-            background_write_map();
-        }
+
+        //if(std.time.timestamp() - state.generate_map_timestamp >= MAP_GENERATION_TIME) {
+        //    state.generate_map_timestamp = std.time.timestamp();
+        //    //background_write_map();
+        //}
         update_clients() catch |err| {
             std.log.err("Failed to update clients: {any}", .{err});
         };

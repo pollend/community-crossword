@@ -1,11 +1,12 @@
 <script lang="ts">
 
-  import { onDestroy, onMount } from "svelte";
+  import { onDestroy, onMount, setContext } from "svelte";
   import {
     Application,
     Container,
     FederatedMouseEvent,
     Graphics,
+    isMobile,
     Point,
     Rectangle,
   } from "pixi.js";
@@ -17,26 +18,39 @@
     MessageID,
     netParseCell,
     netParseGameState,
+    netParseNick,
     netParseReady,
+    netParseSessionNegotiation,
     netParseSyncChunk,
     netParseSyncCursors,
     netSendCell,
+    netSendNick,
+    netSendSessionNegotiation,
     netSendViewRect,
     Value
   } from "./net";
   import Keyboard from "./keyboard.svelte"
+  import Highscores from "./highscores.svelte"
+  import Profile from "./profile.svelte";
   import { Quad } from "./quad";
   import { graphicDrawRect } from "./graphic";
   import { Debounce, Throttle } from "./timing";
   import { Direction, type Clue, MouseState } from "./types";
   import { GRID_CELL_PX, GRID_SIZE } from "./constants";
   import 'pixi.js/math-extras';
+  import { writable } from "svelte/store";
+  import { ProfileSession } from "./profile";
+
+  const SESSION_KEY = "a7407d0e-5821-4e07-8259-fcaa2228987a";
 
   interface CursorState {
     clientId: number;
     positions: Point[];
     t: number;
   };
+
+  const profileSession = new ProfileSession();
+  setContext("profile", profileSession)
 
   let frame: HTMLDivElement | undefined = $state.raw(undefined);
   let app: Application = new Application();
@@ -50,14 +64,23 @@
   let stageDragPosition = new Point(0, 0);
   let quads: Quad[] = [];
   let progress: number = $state(0);
-  let players: number = $state(0);
   let disconnected: boolean = $state(false);
   let otherPlayerCursors: CursorState[] = [];
-  // let mapImageUrl: string = $state('');
-  // let mapRefreshKey: number = $state(0);
 
+  let showKeyboard: boolean = $state(false);
   let highlightSlotsVertical: number[] = $state([]);
   let highlightSlotHorizontal: number[] = $state([]);
+  const nickStore = writable<string>('');
+
+  const enum ActivePanel {
+    None,
+    //Settings,
+    Highscores,
+    Profile
+  }
+
+  // Tab state
+  let activePanel: ActivePanel = $state(ActivePanel.None);
 
   interface ClueSlots {
     pos: Point; // Position of the clue in grid cells
@@ -65,6 +88,77 @@
     ver: Clue | undefined;
   }
   let clueSlots: (ClueSlots | undefined)[] = $state([]);
+
+  function handleInput(c: string) {
+    const value = charToValue(c);
+    if (value !== undefined && selection.terminated === false) {
+      if (selection.center) {
+        const rec = getViewRectCells();
+        rec.width -= 1;
+        rec.height -= 1;
+        if (rec.contains(selection.center.x, selection.center.y) === false)
+          return; // do not allow to set value outside of view
+
+        switch (selectionDir) {
+          case Direction.Horizontal: {
+            netSendCell(
+              socket!,
+              selection.center.x,
+              selection.center.y,
+              value,
+            );
+            while(true) {
+              selection.center.x += 1;
+              const cell = getCell(selection.center.x, selection.center.y);
+              if(cell === undefined) {
+                selection.terminated = true;
+                return; // do not allow to set value outside of view
+              }
+              if (cellToValue(cell) === Value.black) {
+                selection.center.x -= 1;
+                selection.terminated = true;
+                return; // do not allow to set value on black cell
+              }
+              if(isBlocked(cell)) {
+                continue; // do not allow to set value on black cell
+              }
+              break;
+            }
+            break;
+          }
+          case Direction.Vertical: {
+            netSendCell(
+              socket!,
+              selection.center.x,
+              selection.center.y,
+              value,
+            );
+            while(true) {
+              selection.center.y += 1;
+              const cell = getCell(selection.center.x, selection.center.y);
+              if(cell === undefined) {
+                selection.terminated = true;
+                return; // do not allow to set value outside of view
+              }
+              if (cellToValue(cell) === Value.black) {
+                selection.center.y -= 1;
+                selection.terminated = true;
+                return; // do not allow to set value on black cell
+              }
+              if(isBlocked(cell)) {
+                continue; // do not allow to set value on black cell
+              }
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  function backPress() {
+
+  }
 
   const refreshQuads = new Throttle(200, () => {
     const updated: Quad[] = [];
@@ -289,6 +383,7 @@
       Math.min(Math.max(0, x), boardSize.x * GRID_CELL_PX - size.x), 
       Math.min(Math.max(0, y), boardSize.y * GRID_CELL_PX - size.y));
   }
+
   function getViewRect(): Rectangle {
     const size = viewSize();
     return new Rectangle(
@@ -313,14 +408,7 @@
   // let mapRefreshInterval: number;
 
   onMount(async () => {
-    // // Load initial map
-    // refreshMap();
-    
-    // // Set up refresh interval (30 minutes = 1800000ms)
-    // mapRefreshInterval = setInterval(refreshMap, 1800000);
-    
-    
-    await app.init({ background: "#FFFFFF", resizeTo: frame });
+    await app.init({ background: "#FFFFFF", resizeTo: frame});
     frame!.appendChild(app.canvas);
 
     if(import.meta.env.VITE_WS_URL) {
@@ -337,6 +425,7 @@
       let offset = 0;
       const msgid = view.getUint8(offset); // Read the message ID
       offset += 1;
+      console.log("Received message ID:", msgid);
       switch (msgid) {
         case MessageID.ready: {
           const readyPkt = netParseReady(view, offset);
@@ -346,6 +435,18 @@
             (boardSize.y * GRID_CELL_PX) * Math.random(),
           );
           syncViewThrottle.trigger();
+          netSendSessionNegotiation(socket!, window.localStorage.getItem(SESSION_KEY) || ""); // will send an empty key if not set
+          break;
+        }
+        case MessageID.update_nick: {
+          nickStore.set(netParseNick(view, offset));
+          break;
+        }
+        case MessageID.session_negotiation: {
+          let msg = netParseSessionNegotiation(view, offset);
+          nickStore.set(msg.nick);
+          profileSession.load(msg.session);
+          window.localStorage.setItem(SESSION_KEY, msg.session);
           break;
         }
         case MessageID.input_or_sync_cell: {
@@ -365,7 +466,6 @@
         case MessageID.broadcast_game_state: {
           const msg = netParseGameState(view, offset);
           progress = msg.progress * 100.0;
-          players = msg.num_player;
           break;
         }
         case MessageID.sync_block: {
@@ -411,23 +511,13 @@
         }
       }
     };
-    //let pingTimeout: number | undefined = undefined;
-    //pingTimeout = setTimeout(() => {
-    //  if (socket && socket.readyState === WebSocket.OPEN) {
-    //    netSendPing(socket);
-    //  }
-    //}, 5000);
 
     socket.onclose = function () {
       disconnected = true;
-    //  if (pingTimeout) {
-    //    clearTimeout(pingTimeout);
-    //    pingTimeout = undefined;
-    //  }
     };
 
     socket.onopen = function () {
-      //netSendViewRect(socket, 0, 0, app.screen.width, app.screen.height);
+
     };
     // ----------------------------------------------------
     const graphicContainer = new Graphics();
@@ -443,73 +533,7 @@
     frontGraphics.zIndex = 10;
     mainStage.sortableChildren = true;
 
-    document.addEventListener("keydown", (event) => {
-      const value = charToValue(event.key);
-
-      if (value !== undefined && selection.terminated === false) {
-        if (selection.center) {
-          const rec = getViewRectCells();
-          rec.width -= 1;
-          rec.height -= 1;
-          if (rec.contains(selection.center.x, selection.center.y) === false)
-            return; // do not allow to set value outside of view
-
-          switch (selectionDir) {
-            case Direction.Horizontal: {
-              netSendCell(
-                socket!,
-                selection.center.x,
-                selection.center.y,
-                value,
-              );
-              while(true) {
-                selection.center.x += 1;
-                const cell = getCell(selection.center.x, selection.center.y);
-                if(cell === undefined) {
-                  selection.terminated = true;
-                  return; // do not allow to set value outside of view
-                }
-                if (cellToValue(cell) === Value.black) {
-                  selection.center.x -= 1;
-                  selection.terminated = true;
-                  return; // do not allow to set value on black cell
-                }
-                if(isBlocked(cell)) {
-                  continue; // do not allow to set value on black cell
-                }
-                break;
-              }
-              break;
-            }
-            case Direction.Vertical: {
-              netSendCell(
-                socket!,
-                selection.center.x,
-                selection.center.y,
-                value,
-              );
-              while(true) {
-                selection.center.y += 1;
-                const cell = getCell(selection.center.x, selection.center.y);
-                if(cell === undefined) {
-                  selection.terminated = true;
-                  return; // do not allow to set value outside of view
-                }
-                if (cellToValue(cell) === Value.black) {
-                  selection.center.y -= 1;
-                  selection.terminated = true;
-                  return; // do not allow to set value on black cell
-                }
-                if(isBlocked(cell)) {
-                  continue; // do not allow to set value on black cell
-                }
-                break;
-              }
-            }
-          }
-        }
-      }
-    });
+    document.addEventListener("keydown", (event) => handleInput(event.key));
 
     // dragging the board
     {
@@ -536,6 +560,9 @@
             break;
           }
           case MouseState.Clicking: {
+            if(isMobile.any) {
+              showKeyboard = true; 
+            }
             const pp = ev.getLocalPosition(mainStage);
             const center = new Point(
               Math.floor(pp.x / GRID_CELL_PX),
@@ -553,11 +580,9 @@
                     : Direction.Horizontal;
               } else {
                 selection.center = center;
-                focusMobileInput(); // Focus mobile input when cell is selected
               }
             } else {
               selection.center = center;
-              focusMobileInput(); // Focus mobile input when cell is selected
             }
             break;
           }
@@ -584,6 +609,11 @@
 
     app.ticker.add((_) => {
       const size = viewSize();
+      {
+        app.canvas.height = size.x
+
+      }
+
       const rect = getViewRect();
       mainStage.pivot.set(rect.x, rect.y);
       graphicContainer.clear();
@@ -775,16 +805,35 @@
   </div>
 {/if}
 
-<div class="container mx-auto flex sm:w-full">
-  <div class="flex-4 flex flex-col">
-    <div class="mb-3 flex">
-      <div class="w-10 flex m-auto items-center text-black">
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-person-arms-up" viewBox="0 0 16 16">
-          <path d="M8 3a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3"/>
-          <path d="m5.93 6.704-.846 8.451a.768.768 0 0 0 1.523.203l.81-4.865a.59.59 0 0 1 1.165 0l.81 4.865a.768.768 0 0 0 1.523-.203l-.845-8.451A1.5 1.5 0 0 1 10.5 5.5L13 2.284a.796.796 0 0 0-1.239-.998L9.634 3.84a.7.7 0 0 1-.33.235c-.23.074-.665.176-1.304.176-.64 0-1.074-.102-1.305-.176a.7.7 0 0 1-.329-.235L4.239 1.286a.796.796 0 0 0-1.24.998l2.5 3.216c.317.316.475.758.43 1.204Z"/>
+<div class="container mx-auto flex sm:w-full relative">
+  <div class="top-0 right-0 z-30 flex space-x-1 absolute">
+    <button class="px-2 py-2 font-medium transition-all duration-200 bg-blue-500" onclick={() => {activePanel = ActivePanel.Highscores}} >
+      <div class="flex items-center space-x-2">
+        <svg class="w-6 h-6" fill="white" viewBox="0 0 32 32">
+          <path d="M 6,0 V 4 H 2 C 1.43333,4 0.95078,4.19961 0.55078,4.59961 0.18411,4.99961 0,5.48217 0,6.04883 V 16 c 0,1.1 0.38372,2.04962 1.15039,2.84961 C 1.91706,19.61628 2.86667,20 4,20 h 8 v 4 H 6 C 5.43333,24 4.95078,24.19961 4.55078,24.59961 4.18411,24.99961 4,25.48217 4,26.04883 V 28 H 28 V 26 C 28,25.46667 27.80039,24.99961 27.40039,24.59961 27.00039,24.19961 26.53333,24 26,24 h -6 v -4 h 8 c 1.1,0 2.03411,-0.38372 2.80078,-1.15039 C 31.60078,18.08295 32,17.13334 32,16 V 6 C 32,5.46667 31.80039,4.99961 31.40039,4.59961 31.00039,4.19961 30.53333,4 30,4 H 26 V 0 Z M 4,8 h 2 v 8 H 4 Z m 22,0 h 2 v 8 h -2 z" />
         </svg>
-        {players}
       </div>
+    </button>
+    <button class="px-2 py-2 font-medium transition-all duration-200 bg-blue-500" onclick={() => {activePanel = ActivePanel.Profile}}  >
+      <div class="flex items-center space-x-2">
+        <svg class="w-6 h-6" fill="white" viewBox="0 0 32 32">
+          <path d="M 14,0 C 11.9333,1e-6 10.1833,0.717059 8.75,2.150391 7.2833,3.55039 6.5488,5.250003 6.5488,7.25 c 0,1.933332 0.7015,3.600002 2.1015,5 -1.6666,0.7 -3.1841,1.700002 -4.5507,3 C 1.3662,17.883333 0,21.082947 0,24.84961 0.033,26.849608 1.3996,28.533726 4.0996,29.900391 6.8329,31.30039 10.1333,32 14,32 17.9,32 21.2003,31.30039 23.9003,29.900391 26.6337,28.533726 28,26.849608 28,24.84961 28,21.082947 26.6337,17.883333 23.9003,15.25 22.5337,13.950002 21.0162,12.95 19.3496,12.25 20.7829,10.850002 21.5,9.183332 21.5,7.25 21.5,5.250003 20.7654,3.55039 19.2988,2.150391 17.8655,0.717059 16.1,0 14,0 Z" />
+        </svg>
+      </div>
+    </button>
+   
+<!--
+    <button class="px-2 py-2 font-medium transition-all duration-200 bg-blue-500" onclick={() => {activePanel = ActivePanel.Settings}} >
+      <div class="flex items-center space-x-2">
+        <svg class="w-6 h-6" fill="white" viewBox="0 0 32 32">
+          <path d="m 16,0 c -2.23333,0 -4.30118,0.40118 -6.20117,1.20118 -0.3,0.13333 -0.51706,0.34843 -0.65039,0.64843 -0.13334,0.3 -0.13334,0.6004 0,0.90039 l 1.30078,3.09961 c -0.6,0.33334 -1.18334,0.73451 -1.75,1.20118 L 6.34961,4.70118 C 6.11627,4.46784 5.83333,4.34961 5.5,4.34961 c -0.3,0 -0.56745,0.11823 -0.80078,0.35157 -1.6,1.56666 -2.78412,3.31667 -3.55078,5.25 -0.13334,0.3 -0.13334,0.59843 0,0.89843 L 1.79883,11.5 4.89844,12.75 4.5,14.80079 H 1.19922 c -0.33334,0 -0.61628,0.11627 -0.84961,0.34961 C 0.11627,15.38373 0,15.66667 0,16 c 0,2.23334 0.39922,4.30118 1.19922,6.20118 l 0.65039,0.64843 c 0.3,0.13334 0.60039,0.13334 0.90039,0 l 3.09961,-1.29882 1.19922,1.75 -2.34961,2.34961 C 4.46588,25.88373 4.34961,26.16667 4.34961,26.5 c 0,0.33334 0.11627,0.61628 0.34961,0.84961 1.56666,1.56667 3.31666,2.73334 5.25,3.5 0.3,0.13334 0.60039,0.13334 0.90039,0 L 11.5,30.20118 12.75,27.1504 14.79883,27.5 v 3.30079 c 0,0.33333 0.11627,0.61627 0.34961,0.84961 C 15.38177,31.88373 15.66666,32 16,32 c 2.23333,0 4.29922,-0.39921 6.19922,-1.19921 l 0.65039,-0.65039 c 0.13333,-0.3 0.13333,-0.6004 0,-0.9004 L 21.54883,26.20118 23.29883,25 25.64844,27.34961 26.5,27.6504 27.29883,27.34961 c 1.59999,-1.59999 2.78411,-3.35 3.55078,-5.25 0.13333,-0.3 0.13333,-0.59843 0,-0.89843 L 30.19922,20.55079 27.09961,19.25 27.5,17.20118 h 3.29883 c 0.33333,0 0.61627,-0.11823 0.84961,-0.35157 C 31.88177,16.61628 32,16.33334 32,16 32,13.76667 31.59882,11.70078 30.79883,9.80079 L 30.14844,9.1504 c -0.3,-0.13334 -0.59844,-0.13334 -0.89844,0 L 26.14844,10.45118 25,8.70118 27.29883,6.34961 27.64844,5.55079 c 0,-0.33334 -0.11628,-0.61628 -0.34961,-0.84961 l -1.65039,-1.5 C 24.5151,2.33451 23.33294,1.6504 22.09961,1.1504 c -0.33334,-0.13334 -0.65118,-0.13334 -0.95117,0 -0.3,0.13333 -0.49961,0.35039 -0.59961,0.65039 L 19.25,4.9004 17.19922,4.5 V 1.20118 c 0,-0.33334 -0.11628,-0.61823 -0.34961,-0.85157 C 16.61627,0.11628 16.33333,0 16,0 Z m 0,8.25 c 2.13333,0 3.96667,0.75001 5.5,2.25 1.5,1.53334 2.25,3.36667 2.25,5.5 0,2.13334 -0.75,3.96667 -2.25,5.5 C 19.96667,23 18.13333,23.75 16,23.75 13.86667,23.75 12.03333,23 10.5,21.5 9,19.96667 8.25,18.13334 8.25,16 8.25,13.86667 9,12.03334 10.5,10.5 12.03333,9.00001 13.86667,8.25 16,8.25 Z m 0,3.9004 c -1.06667,0 -1.98334,0.36627 -2.75,1.0996 -0.73334,0.76667 -1.10156,1.68334 -1.10156,2.75 0,1.06667 0.36822,1.98334 1.10156,2.75 0.76666,0.76667 1.68333,1.1504 2.75,1.1504 1.06666,0 1.98333,-0.38373 2.75,-1.1504 0.76666,-0.76666 1.14844,-1.68333 1.14844,-2.75 0,-1.06666 -0.38178,-1.98333 -1.14844,-2.75 C 17.98333,12.51667 17.06666,12.1504 16,12.1504 Z" />
+        </svg>
+      </div>
+    </button> -->
+  </div>
+
+  <div class="flex-4 flex flex-col overflow-hidden mt-15">
+    <div class="mb-3 flex">
       <div class="flex-auto">
         <div class="flex justify-between items-center mb-2">
           <span class="text-sm font-medium text-gray-700">Puzzle Progress</span>
@@ -798,7 +847,7 @@
         </div>
       </div>
     </div>
-    
+    <div class="aspect-square border-black border-2" bind:this={frame}></div>
     <div class="bg-sky-300 items-center justify-center text-black text-center mb-3 p-4">
       {#if selectionText !== ""}
         {selectionText}
@@ -806,10 +855,8 @@
         ???
       {/if}
     </div>
-  
-    <div class="aspect-square overflow-hidden border-black border-2" bind:this={frame}></div>
   </div>
-  <div class="flex-3 text-black">
+  <div class="flex-3 text-black block hidden md:block mt-10">
     <div class="flex">
       <div class="flex-1 m-3">
         <h1 class="text-2xl font-bold border-b-1 border-gray-200">Across</h1>
@@ -878,7 +925,50 @@
   </div>
 </div>
 
-<Keyboard visible={false}></Keyboard>
+<Keyboard visible={showKeyboard} keypress={handleInput} backpress={backPress} close={() => showKeyboard = false}></Keyboard>
+<Highscores isOpen={activePanel == ActivePanel.Highscores} close={() => activePanel = ActivePanel.None}/>
+<Profile updateNick={(nick) => {
+  netSendNick(socket!, nick);
+}} displayStore={nickStore} isOpen={activePanel == ActivePanel.Profile} close={() => activePanel = ActivePanel.None}/>
+
+<!-- Sessions Panel 
+{#if showSessionsPanel}
+  <div 
+    class="fixed top-0 right-0 h-full w-96 bg-white shadow-2xl transform transition-transform duration-300 ease-in-out z-50"
+  >
+    <div class="flex items-center justify-between p-6 border-b border-gray-200 bg-gradient-to-r from-blue-600 to-blue-700 text-white">
+      <h2 class="text-2xl font-bold">👥 Active Sessions</h2>
+      <button 
+        onclick={() => showSessionsPanel = false}
+        class="text-white hover:text-gray-200 transition-colors duration-200"
+        aria-label="Close sessions panel"
+      >
+        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+
+    <div class="flex-1 overflow-y-auto p-6">
+      <div class="text-center text-gray-500 mt-8">
+        <svg class="w-16 h-16 mx-auto mb-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+        </svg>
+        <p class="text-lg font-medium">Sessions Feature Coming Soon!</p>
+        <p class="text-sm">This will show active game sessions and allow you to join different rooms.</p>
+      </div>
+    </div>
+
+    <div class="border-t border-gray-200 p-4 bg-gray-50">
+      <div class="flex items-center justify-between text-sm text-gray-600">
+        <span>Current session: Room #{Math.floor(Math.random() * 1000)}</span>
+        <span>{players} player{players !== 1 ? 's' : ''} online</span>
+      </div>
+    </div>
+  </div>
+{/if} -->
+
+<!-- Highscores Panel -->
 
 <style lang="postcss">
   @reference "tailwindcss";

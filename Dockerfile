@@ -22,8 +22,8 @@ WORKDIR /app
 # Copy source files
 COPY . .
 
-RUN npm install
-RUN npm run build
+#RUN npm install
+#RUN npm run build
 
 # Build the application
 RUN zig build --release=safe -Dtarget=x86_64-linux 
@@ -36,8 +36,9 @@ RUN apt-get install -y ca-certificates
 
 # Copy the built binary
 COPY --from=zig-builder /app/zig-out/bin/app /usr/local/bin
-COPY --from=zig-builder /app/dist /app/dist
+#COPY --from=zig-builder /app/dist /app/dist
 COPY --from=zig-builder /app/crossword.map /app/crossword.map
+RUN mkdir -p /app/dist
 
 # Set working directory
 WORKDIR /app
