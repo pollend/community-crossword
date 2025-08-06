@@ -20,7 +20,7 @@ pub const assert = std.debug.assert;
 
 pub const GRID_SIZE: u32 = 16;
 pub const GRID_LEN: u32 = GRID_SIZE * GRID_SIZE;
-pub const BACKUP_TIME_STAMP: i64 = std.time.s_per_min; // std.time.s_per_min * 30;
+pub const BACKUP_TIME_STAMP: i64 =  std.time.s_per_min * 30;
 pub const MAP_GENERATION_TIME: i64 = std.time.s_per_min * 60;
 pub const SYNC_GAME_STATE_TIME: i64 = std.time.s_per_min * 1;
 pub const INACTIVE_TIMEOUT: i64 = std.time.s_per_min * 5; 
