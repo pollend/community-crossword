@@ -35,7 +35,7 @@
       
       <!-- Bottom row with special keys -->
       <div class="flex justify-center gap-2 mt-3">
-        <button
+        <!-- <button
           class="
             bg-gray-500 hover:bg-red-600 active:bg-red-700
             text-white font-semibold
@@ -47,7 +47,7 @@
           onclick={() => backpress()}
         >
           ⌫ Back 
-        </button>
+        </button> -->
         
         <button
           class="

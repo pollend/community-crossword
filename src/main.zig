@@ -151,7 +151,6 @@ pub fn main() !void {
 
     var port: u16 = 3010; 
     var crossword_map: []const u8 = undefined;
-    var crossword_cache: []const u8 = undefined;
     var threads: i16 = 1;
     var bucket: []const u8  = undefined;
     var region: []const u8  = undefined;
@@ -162,17 +161,17 @@ pub fn main() !void {
         port = 3010;
     }
 
-    if(try __get_env_var(allocator, "CROSSWORD_MAP")) |str| {
+    if(try __get_env_var(allocator, "CROSSWORD_LOAD")) |str| {
         crossword_map = str;
     } else {
-        crossword_map = "crossword.map";
+        crossword_map = "crossword";
     }
     
-    if(try __get_env_var(allocator, "CROSSWORD_CACHE")) |str| {
-        crossword_cache = str;
-    } else {
-        crossword_cache  = "crossword.cache";
-    }
+    //if(try __get_env_var(allocator, "CROSSWORD_CACHE")) |str| {
+    //    crossword_cache = str;
+    //} else {
+    //    crossword_cache  = "crossword.cache";
+    //}
 
     if(try __get_env_var(allocator, "THREADS")) |thread_str| {
         threads = try __parse_env_integer(i16, thread_str, "THREADS");
@@ -219,8 +218,7 @@ pub fn main() !void {
         .running = std.atomic.Value(bool).init(true),
         .global = global_scores,
 
-        .crossword_cache = crossword_cache,
-        .crossword_map = crossword_map,
+        .map_key = crossword_map,
 
         .bucket = bucket,
         .region = region,
@@ -228,33 +226,11 @@ pub fn main() !void {
    
         .board = undefined,
     };
-
     // load the crossword map 
-    {
-        const map_resp = try aws.Request(aws.services.s3.get_object).call(.{
-            .bucket = bucket,
-            .key = crossword_map,
-        }, .{
-            .region = region,
-            .client = aws_client,
-        });
-        defer map_resp.deinit();
-        var stream = std.io.fixedBufferStream(map_resp.response.body orelse "");
-        var reader = stream.reader();
-
-        const cache_resp = try aws.Request(aws.services.s3.get_object).call(.{
-            .bucket = bucket,
-            .key = crossword_cache,
-        }, .{
-            .region = region,
-            .client = aws_client,
-        });
-        defer cache_resp.deinit();
-        var cache_stream = std.io.fixedBufferStream(cache_resp.response.body orelse "");
-        var cache_reader = cache_stream.reader();
-        game.state.board = try game.Board.load(allocator, reader.any(),cache_reader.any());
-    }
-  
+    game.state.board = try game.Board.load_s3(allocator, bucket, crossword_map, . {
+        .client = aws_client,
+        .region = region,
+    });
     var background_worker = try std.Thread.spawn(.{}, game.background_worker, .{});
     var listener = zap.HttpListener.init(
         .{

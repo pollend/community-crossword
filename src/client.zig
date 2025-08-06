@@ -226,12 +226,12 @@ fn on_message_websocket(
                     std.log.debug("Restoring session: {s}", .{c.profile.get_nick_name() orelse "Unknown"});
                     try net.msg_send_session_negotiation(c, &c.profile);
                 } else {
-                    // If the session negotiation fails disconnect the client
-                    WebsocketHandler.close(c.handle);
+                    try net.msg_send_session_negotiation(c, &c.profile);
                 }
             },
             .update_nick => {
                 const msg = try net.msg_parse_update_nick(reader.any());
+                std.debug.print("updatin nick: {s} ({d})\n", .{msg.nick[0..msg.nick_len], msg.nick_len});
                 c.profile.set_nick_name(msg.nick[0..msg.nick_len]) catch |err| {
                     std.log.err("Failed to set nick name: {any}", .{err});
                 };

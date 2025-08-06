@@ -59,6 +59,7 @@
   let app: Application = new Application();
   let mainStage: Container = new Container();
   let socket: WebSocket | undefined = undefined;
+  setContext("socket", socket);
 
   let mouse: MouseState = MouseState.None;
   let cursorPos = new Point(0, 0);
@@ -810,7 +811,7 @@
 </script>
 
 {#if disconnected}
-  <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+  <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-200">
     <div class="bg-white rounded-lg p-6 max-w-md mx-4 shadow-xl">
       <div class="text-center">
         <div class="text-6xl mb-4">🔌</div>

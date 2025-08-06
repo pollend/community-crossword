@@ -5,10 +5,10 @@ const set = @import("ziglangSet");
 const csv = @import("csv");
 const assert = std.debug.assert;
 const word_dfs = @import("word_dfs.zig");
-//pub const WIDTH = 512;
-//pub const HEIGHT = 512;
-pub const WIDTH = 64;
-pub const HEIGHT = 64;
+pub const WIDTH = 384;
+pub const HEIGHT = 384;
+//pub const WIDTH = 64;
+//pub const HEIGHT = 64;
 
 pub const MAGIC_NUMBER: u32 = 0x1F9F1E9f; 
 pub const BLOCK_CHAR = '@'; // Character used to represent a blocked cell

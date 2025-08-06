@@ -3,7 +3,7 @@ const profile_session = @import("profile_session.zig");
 const aws = @import("aws");
 const game = @import("game.zig");
 pub const HIGHSCORE_MAGIC_NUMBER: u32 = 0x48495343; // "HISC"
-pub const HighscoreVersion = enum(u32) {
+pub const HighscoreVersion = enum(u16) {
     unknown = 0,
     v0000 = 1, // Initial version
 };
@@ -11,7 +11,7 @@ pub const HighscoreVersion = enum(u32) {
 pub const Entry = struct {
     session_id: [profile_session.SESSION_ID_LENGTH]u8,
     nick: []const u8,
-    last_word: ?[]const game.Value, 
+    last_word: ?[]const game.Value,
     score: u32,
     num_words_solved: u32,
 
@@ -77,7 +77,6 @@ pub fn FixedHighscoreTable(comptime size: usize) type {
             }
         }
 
-
         fn find_entry(
             self: *Self,
             session_id: []const u8
@@ -117,9 +116,10 @@ pub fn FixedHighscoreTable(comptime size: usize) type {
             if( magic != HIGHSCORE_MAGIC_NUMBER) {
                 return error.InvalidHighscoreMagicNumber;
             }
-            const version: HighscoreVersion = @enumFromInt(try reader.readInt(u16, .little));
+            const version: HighscoreVersion = try reader.readEnum(HighscoreVersion, .little);
             switch(version) {
                 .v0000 => {
+                    _ = try reader.readInt(i64, .little); // skip timestamp
                     const num: usize = @min(try reader.readInt(u16, .little), size);
                     result.num_entries = num;
                     var i: usize = 0;
@@ -178,6 +178,7 @@ pub fn FixedHighscoreTable(comptime size: usize) type {
 
             try writer.writeInt(u32, HIGHSCORE_MAGIC_NUMBER, .little);
             try writer.writeInt(u16, @intFromEnum(HighscoreVersion.v0000), .little);
+            try writer.writeInt(i64, std.time.timestamp(), .little);
             try writer.writeInt(u16, @intCast(self.num_entries), .little);
             {
                 var i: usize = 0;
@@ -249,11 +250,10 @@ pub fn FixedHighscoreTable(comptime size: usize) type {
             defer self.lock.unlock();
             if (self.find_entry(profile.session_id[0..])) |e| {
                 e.*.deinit(self.allocator);
-                 
                 e.* = try Entry.init(
                     self.allocator,
                     profile.session_id[0..],
-                    profile.nick[0..],
+                    profile.nick.slice(),
                     if(profile.words_solved.last()) |last_word| last_word.word[0..] else null, 
                     profile.score,
                     profile.num_clues_solved,
@@ -277,7 +277,7 @@ pub fn FixedHighscoreTable(comptime size: usize) type {
                     self.table[i] = try Entry.init(
                         self.allocator,
                         profile.session_id[0..],
-                        profile.nick[0..],
+                        profile.nick.slice(),
                         if(profile.words_solved.last()) |last_word| last_word.word[0..] else null, 
                         profile.score,
                         profile.num_clues_solved,
@@ -289,7 +289,7 @@ pub fn FixedHighscoreTable(comptime size: usize) type {
                     self.table[i] = try Entry.init(
                         self.allocator,
                         profile.session_id[0..],
-                        profile.nick[0..],
+                        profile.nick.slice(),
                         if(profile.words_solved.last()) |last_word| last_word.word[0..] else null, 
                         profile.score,
                         profile.num_clues_solved,

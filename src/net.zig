@@ -147,8 +147,8 @@ pub fn msg_send_session_negotiation(c: *client.Client, sess: *profile_session.Pr
     var writer = buffer.writer();
     try writer.writeByte(@intFromEnum(MsgID.session_negotiation));
     try writer.writeAll(sess.session_id[0..]);
-    try writer.writeInt(u8, @as(u8, @intCast(sess.nick_len)), .little);
-    try writer.writeAll(sess.nick[0..sess.nick_len]);
+    try writer.writeInt(u8, @as(u8, @intCast(sess.nick.len)), .little);
+    try writer.writeAll(sess.nick.slice());
     client.WebsocketHandler.write(c.handle, buffer.items, false) catch |err| {
         std.log.err("Failed to write message: {any}", .{err});
         return err;

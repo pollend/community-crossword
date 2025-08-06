@@ -382,6 +382,9 @@ pub const Board = struct {
         key: []const u8,
         options: aws.Options
     ) !void {
+        const load_cache = try std.fmt.allocPrint(allocator, "{s}.cache", .{key});
+        defer allocator.free(load_cache);
+
         var buffer = std.ArrayList(u8).initCapacity(allocator, self.size[0] * self.size[1] * GRID_LEN) catch |err| {
             std.log.err("Failed to create backup buffer: {any}", .{err});
             return err;
@@ -394,7 +397,7 @@ pub const Board = struct {
         };
         const result = aws.Request(aws.services.s3.put_object).call(.{
             .bucket = bucket,
-            .key = key,
+            .key = load_cache,
             .content_type = "application/octet-stream",
             .body = buffer.items,
             .storage_class = "STANDARD",
@@ -453,6 +456,35 @@ pub const Board = struct {
                 unreachable;
             }
         }
+    }
+
+    pub fn load_s3(
+        allocator: std.mem.Allocator,
+        bucket: []const u8,
+        key: []const u8,
+        options: aws.Options,
+    ) !Board {
+        const load_map = try std.fmt.allocPrint(allocator, "{s}.map", .{key});
+        defer allocator.free(load_map);
+        const load_cache = try std.fmt.allocPrint(allocator, "{s}.cache", .{key});
+        defer allocator.free(load_cache);
+
+        const map_resp = try aws.Request(aws.services.s3.get_object).call(.{
+            .bucket = bucket,
+            .key = load_map,
+        }, options);
+        defer map_resp.deinit();
+        var stream = std.io.fixedBufferStream(map_resp.response.body orelse "");
+        var reader = stream.reader();
+
+        const cache_resp = try aws.Request(aws.services.s3.get_object).call(.{
+            .bucket = bucket,
+            .key = load_cache,
+        },options);
+        defer cache_resp.deinit();
+        var cache_stream = std.io.fixedBufferStream(cache_resp.response.body orelse "");
+        var cache_reader = cache_stream.reader();
+        return try game.Board.load(allocator, reader.any(),cache_reader.any());
     }
 
     pub fn load(
@@ -949,7 +981,7 @@ pub fn background_worker() void {
             state.board.write_cache_s3(
                 state.gpa,
                 state.bucket,
-                state.crossword_cache,
+                state.map_key,
                 .{
                     .region = state.region,
                     .client = state.aws_client,
@@ -1004,7 +1036,7 @@ pub fn background_worker() void {
     game.state.board.write_cache_s3(
         state.gpa,
         state.bucket,
-        state.crossword_cache,
+        state.map_key,
         .{
             .region = state.region,
             .client = state.aws_client,
@@ -1024,8 +1056,7 @@ pub const State = struct {
     sync_game_state_timestamp: i64,
     running: std.atomic.Value(bool),
 
-    crossword_map: []const u8,
-    crossword_cache: []const u8,
+    map_key: []const u8,
 
     bucket: []const u8,
     region: []const u8,

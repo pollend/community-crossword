@@ -1,9 +1,10 @@
 <script lang="ts">
-import { writable, get, type Writable, type Readable } from 'svelte/store';
+  import { get, type Readable } from 'svelte/store';
   import SidebarContainer from './sidbarConatiner.svelte';
-    import { getContext } from 'svelte';
-    import { ProfileSession, wordValue } from './profile';
-    import { charToValue, isEmptyValue, valueToChar } from './net';
+  import { getContext } from 'svelte';
+  import { ProfileSession, wordValue } from './profile';
+  import {  isEmptyValue, valueToChar } from './net';
+  import ScoreWord from './score_word.svelte';
   let { close, updateNick, isOpen, displayStore }: {updateNick: (nick: string) => void,close:() => void, isOpen: boolean, displayStore: Readable<string>} = $props();
 
   let display: string = $state('');
@@ -76,18 +77,7 @@ import { writable, get, type Writable, type Readable } from 'svelte/store';
         {#each $words_solved as solve}
           <div class="bg-gray-50 p-3 border-l-4 border-blue-400">
               <div class="flex justify-between items-start mb-2">
-                <div class="text-xl font-semibold text-gray-900 uppercase tracking-wide">
-                  {#each solve.word as letter}
-                    <span class="relative">
-                      {valueToChar(letter)}
-                      {#if !isEmptyValue(letter || 0)}
-                        <span class="absolute -top-2 -right-0 text-xs text-gray-500 font-thin">
-                          { wordValue(letter)}
-                        </span>
-                      {/if}
-                    </span>
-                  {/each}
-                </div>
+                <ScoreWord input={solve.word}></ScoreWord>
                 <div class="font-bold text-xl text-green-500"> +{solve.score}</div>
               </div>
 

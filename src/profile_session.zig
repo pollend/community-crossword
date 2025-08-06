@@ -27,8 +27,7 @@ pub const Solved = struct {
 
 num_clues_solved: u32 = 0,
 allocator: std.mem.Allocator,
-nick_len: u16 = 0,
-nick: [NICK_MAX_LENGTH]u8,
+nick: std.BoundedArray(u8, NICK_MAX_LENGTH), 
 score: u32 = 0,
 session_id: [SESSION_ID_LENGTH]u8 = undefined,
 words_solved: FifoSolved, 
@@ -39,16 +38,15 @@ pub fn empty(allocator: std.mem.Allocator) !ProfileSession {
         .words_solved = FifoSolved.init(),
         .session_id = nanoid.generate(SESSION_ID_LENGTH, std.crypto.random, nanoid.URL_SAFE[0..]), // empty session ID
         .allocator = allocator,
-        .nick = undefined,
-        .nick_len = 0,
+        .nick = std.BoundedArray(u8, NICK_MAX_LENGTH).init(0) catch unreachable,
     };
 }
 
 pub fn get_nick_name(self: *const ProfileSession) ?[]const u8 {
-    if (self.nick_len == 0) {
+    if (self.nick.len == 0) {
         return null;
     }
-    return self.nick[0..self.nick_len];
+    return self.nick.slice();
 }
 
 pub fn commit_profile_s3(
@@ -120,8 +118,8 @@ pub fn set_nick_name(
     if (nick.len > NICK_MAX_LENGTH) {
         return error.NickTooLong;
     }
-    self.nick_len = @intCast(nick.len);
-    @memcpy(self.nick[0..self.nick_len], nick[0..self.nick_len]);
+    self.nick.len = nick.len;
+    @memcpy(self.nick.buffer[0..nick.len], nick[0..nick.len]);
 }
 
 pub fn deinit(self: *ProfileSession) void {
@@ -160,8 +158,8 @@ pub fn write(
     try writer.writeInt(u32, SESSION_MAGIC_NUMBER, .little);
     try writer.writeInt(u16, @intFromEnum(SessionVersion.v0000), .little);
     try writer.writeInt(i64, std.time.timestamp(), .little);
-    try writer.writeInt(u16, self.nick_len, .little);
-    try writer.writeAll(self.nick[0..self.nick_len]);
+    try writer.writeInt(u16, @intCast(self.nick.len), .little);
+    try writer.writeAll(self.nick.buffer[0..self.nick.len]);
     try writer.writeInt(u32, self.num_clues_solved, .little);
     try writer.writeInt(u32, self.score, .little);
     const solves_len = self.words_solved.length();
@@ -207,11 +205,11 @@ pub fn load(
             errdefer session.deinit();
             @memcpy(session.session_id[0..], session_id[0..]);
 
-            session.nick_len = try reader.readInt(u16, .little);
-            if (session.nick_len > NICK_MAX_LENGTH) {
+            session.nick.len = @intCast(try reader.readInt(u16, .little));
+            if (session.nick.len > NICK_MAX_LENGTH) {
                 return error.NickTooLong;
             }
-            if(try reader.readAll(session.nick[0..session.nick_len]) != session.nick_len) {
+            if(try reader.readAll(session.nick.slice()) != session.nick.len) {
                 return error.EndOfStream;
             }
             session.num_clues_solved = try reader.readInt(u32, .little);

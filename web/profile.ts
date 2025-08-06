@@ -1,6 +1,6 @@
 import { writable, Writable } from "svelte/store";
 import { PROFILE_MAGIC } from "./constants";
-import { charToValue, Value } from "./net";
+import { Value } from "./net";
 
 interface Solves {
   timestamp: Date; // UTC timestamp in seconds
@@ -78,16 +78,16 @@ export class ProfileSession {
       throw new Error("Session ID is not set");
     }
     await this.load(this.id);
-  }    
+  }
 
   public push(word: Value[], clue: string) {
     this.words_solved.update((solves) => {
-        solves.push({
-          timestamp: new Date(),
-          word: word,
-          clue: clue,
-          score: calculateScore(word),
-        });
+      solves.push({
+        timestamp: new Date(),
+        word: word,
+        clue: clue,
+        score: calculateScore(word),
+      });
       return solves;
     });
   }
@@ -111,7 +111,7 @@ export class ProfileSession {
       switch (version) {
         case ProfileVersion.v0000: {
           const last_update = view.getBigInt64(offset, true);
-          this.last_updated.set(new Date(Number(last_update)));
+          this.last_updated.set(new Date(Number(last_update) * 1000));
           offset += 8;
           const nick_len = view.getUint16(offset, true);
           offset += 2;
@@ -130,8 +130,8 @@ export class ProfileSession {
             offset += 8;
             const word_len = view.getUint16(offset, true);
             offset += 2;
-            const word: Value[]=  []; //data.slice(offset, offset + word_len);
-            for(let j = 0; j < word_len; j++) { 
+            const word: Value[] = []; //data.slice(offset, offset + word_len);
+            for (let j = 0; j < word_len; j++) {
               word.push(view.getUint8(offset));
               offset += 1;
             }
@@ -143,7 +143,7 @@ export class ProfileSession {
             offset += clue_len;
             this.words_solved.update((solves) => {
               solves.push({
-                timestamp: new Date(Number(utc)),
+                timestamp: new Date(Number(utc) * 1000),
                 word: word,
                 clue: clue,
                 score: calculateScore(word),

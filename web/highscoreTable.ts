@@ -16,22 +16,24 @@ export const enum HighscoreVersion {
 
 export class HighscoreTable {
   public entries: Writable<HighscoreEntry[]> = writable([]);
+  public last_updated: Writable<Date | undefined> = writable(undefined);
 
-  constructor(private readonly base: string) {
-  }
+  constructor(private readonly base: string) {}
 
   public async refresh() {
     try {
       const response = await fetch(
         `${import.meta.env.VITE_APP_S3}/${this.base}.highscore`,
       );
-      
+
       if (!response.ok) {
-        console.warn(`Failed to fetch highscores: ${response.status} ${response.statusText}`);
+        console.warn(
+          `Failed to fetch highscores: ${response.status} ${response.statusText}`,
+        );
         return;
       }
 
-      this.entries.set([]); 
+      this.entries.set([]);
       const data = await response.arrayBuffer();
       const view = new DataView(data);
       let offset = 0;
@@ -39,9 +41,9 @@ export class HighscoreTable {
       // Read magic number
       const magic = view.getUint32(offset, true); // little endian
       offset += 4;
-      
+
       if (magic !== HIGHSCORE_MAGIC_NUMBER) {
-        console.error('Invalid highscore file magic number');
+        console.error("Invalid highscore file magic number");
         return [];
       }
 
@@ -54,6 +56,9 @@ export class HighscoreTable {
         return [];
       }
 
+      const utc = view.getBigInt64(offset, true);
+      this.last_updated.set(new Date(Number(utc) * 1000));
+      offset += 8;
       // Read number of entries
       const numEntries = view.getUint16(offset, true);
       offset += 2;
@@ -62,14 +67,16 @@ export class HighscoreTable {
         // Read nick length and nick
         const nickLen = view.getUint16(offset, true);
         offset += 2;
-        const nick = new TextDecoder().decode(data.slice(offset, offset + nickLen));
+        const nick = new TextDecoder().decode(
+          data.slice(offset, offset + nickLen),
+        );
         offset += nickLen;
 
         // Read last word length and last word
         const lastWordLen = view.getUint16(offset, true);
         offset += 2;
-        let lastWord: Value[] = [];
-        for( let j = 0; j < lastWordLen; j++) {
+        const lastWord: Value[] = [];
+        for (let j = 0; j < lastWordLen; j++) {
           lastWord.push(view.getUint8(offset));
           offset += 1;
         }
@@ -86,10 +93,10 @@ export class HighscoreTable {
             numWordsSolved,
           });
           return en;
-        }) 
+        });
       }
     } catch (error) {
-      console.error('Error loading highscores:', error);
+      console.error("Error loading highscores:", error);
     }
   }
 }
