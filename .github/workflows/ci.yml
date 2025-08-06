@@ -33,7 +33,7 @@ jobs:
       run: VITE_WS_URL='wss://squid-app-tq2pb.ondigitalocean.app/' VITE_APP_S3='https://crossword.sfo3.digitaloceanspaces.com/' npm run build
 
     - name: Upload to Itch.io
-      if: github.ref == 'refs/heads/master'
+      if: github.ref == 'refs/heads/main'
       env:
         BUTLER_API_KEY: ${{ secrets.BUTLER_API_KEY }}
       run: |
