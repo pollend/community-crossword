@@ -865,6 +865,9 @@
         data-ad-slot="5528739759"
         data-ad-format="auto"
         data-full-width-responsive="true"></ins>
+    <script>
+      (adsbygoogle = window.adsbygoogle || []).push({});
+    </script>
     <div class="mb-3 flex">
       <!-- community-crossword -->
       <div class="flex-auto">
