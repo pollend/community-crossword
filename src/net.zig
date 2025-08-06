@@ -3,6 +3,7 @@ const std = @import("std");
 const client = @import("client.zig");
 const game = @import("game.zig");
 const rect = @import("rect.zig");
+const profile_session = @import("profile_session.zig");
 
 pub const MsgID = enum(u8) { 
     ready = 0, 
@@ -12,6 +13,9 @@ pub const MsgID = enum(u8) {
     sync_cursors = 4,
     sync_cursors_delete = 5,
     broadcast_game_state = 6,
+    update_nick = 7,
+    session_negotiation = 8,
+    solved_clue = 9,
     unknown 
 };
 
@@ -21,13 +25,33 @@ pub const MsgInput = struct {
     input: game.Value,
 };
 
-pub fn msg_broadcast_game_state(c: *client.Client, board: *game.Board, num_players: usize) !void {
+pub fn msg_broadcast_game_state(c: *client.Client, board: *game.Board) !void {
     var buffer = std.ArrayList(u8).init(c.allocator);
     defer buffer.deinit();
     var writer = buffer.writer();
     try writer.writeByte(@intFromEnum(MsgID.broadcast_game_state));
-    try writer.writeInt(u32, @intCast(num_players), .little);
     try writer.writeInt(u32, @bitCast(@as(f32, @floatFromInt(board.clues_completed.load(.unordered))) / @as(f32, @floatFromInt(board.clues.items.len))), .little);
+    client.WebsocketHandler.write(c.handle, buffer.items, false) catch |err| {
+        std.log.err("Failed to write message: {any}", .{err});
+        return err;
+    };
+}
+
+pub fn msg_sync_solved_clue(c: *client.Client, clue: *game.Clue, owner: bool) !void {
+    var buffer = std.ArrayList(u8).init(c.allocator);
+    defer buffer.deinit();
+    var writer = buffer.writer();
+    try writer.writeByte(@intFromEnum(MsgID.solved_clue));
+    var flags: u8 = @intFromEnum(clue.dir);
+    if(owner) {
+        flags |= 0x8; // Set the owner bit
+    }
+    try writer.writeInt(u8, flags, .little);
+    try writer.writeInt(u32, clue.pos[0], .little);
+    try writer.writeInt(u32, clue.pos[1], .little);
+    for(clue.word) |w| {
+        try writer.writeInt(u8, @intFromEnum(w), .little);
+    }
     client.WebsocketHandler.write(c.handle, buffer.items, false) catch |err| {
         std.log.err("Failed to write message: {any}", .{err});
         return err;
@@ -117,6 +141,56 @@ pub fn msg_parse_view(reader: std.io.AnyReader) !struct {
     };
 }
 
+pub fn msg_send_session_negotiation(c: *client.Client, sess: *profile_session.ProfileSession) !void {
+    var buffer = std.ArrayList(u8).init(c.allocator);
+    defer buffer.deinit();
+    var writer = buffer.writer();
+    try writer.writeByte(@intFromEnum(MsgID.session_negotiation));
+    try writer.writeAll(sess.session_id[0..]);
+    try writer.writeInt(u8, @as(u8, @intCast(sess.nick.len)), .little);
+    try writer.writeAll(sess.nick.slice());
+    client.WebsocketHandler.write(c.handle, buffer.items, false) catch |err| {
+        std.log.err("Failed to write message: {any}", .{err});
+        return err;
+    };
+}
+
+pub fn msg_send_nick(c: *client.Client, nick: []const u8) !void {
+    if (nick.len > profile_session.NICK_MAX_LENGTH) {
+        std.log.err("Nick too long: {s}", .{nick});
+        return error.InvalidNick;
+    }
+    var buffer = std.ArrayList(u8).init(c.allocator);
+    defer buffer.deinit();
+    var writer = buffer.writer();
+    try writer.writeByte(@intFromEnum(MsgID.update_nick));
+    try writer.writeAll(nick);
+    client.WebsocketHandler.write(c.handle, buffer.items, false) catch |err| {
+        std.log.err("Failed to write message: {any}", .{err});
+        return err;
+    };
+}
+
+pub fn msg_parse_update_nick(reader: std.io.AnyReader) !struct {
+    nick_len: usize,
+    nick: [profile_session.NICK_MAX_LENGTH]u8,
+} {
+    const buf = try reader.readBoundedBytes(profile_session.NICK_MAX_LENGTH);
+    return .{ .nick = buf.buffer, .nick_len = buf.len };
+}
+
+pub fn msg_parse_session_negotiation(reader: std.io.AnyReader) !?struct {
+    session_id: [profile_session.SESSION_ID_LENGTH]u8,
+} {
+    const ses = try reader.readBoundedBytes(profile_session.SESSION_ID_LENGTH);
+    if(ses.len != profile_session.SESSION_ID_LENGTH) {
+        return null;
+    }
+    return .{
+        .session_id = ses.buffer, 
+    };
+}
+
 pub fn msg_ready(c: *client.Client) !void {
     var buffer = std.ArrayList(u8).init(c.allocator);
     defer buffer.deinit();
@@ -129,18 +203,6 @@ pub fn msg_ready(c: *client.Client) !void {
         return err;
     };
 }
-
-//pub fn msg_pong(c: *client.Client, board: *game.Board) !void {
-//    var buffer = std.ArrayList(u8).init(c.allocator);
-//    defer buffer.deinit();
-//    var writer = buffer.writer();
-//    try writer.writeByte(@intFromEnum(client.MsgID.ping));
-//    try writer.writeInt(u32, @bitCast(@as(f32, @floatFromInt(board.clues_completed.load(.unordered))) / @as(f32, @floatFromInt(board.clues.items.len))), .little);
-//    client.WebsocketHandler.write(c.handle, buffer.items, false) catch |err| {
-//        std.log.err("Failed to write message: {any}", .{err});
-//        return err;
-//    };
-//}
 
 pub fn msg_sync_block(c: *client.Client, quad: *game.Quad) !void {
     var buffer = std.ArrayList(u8).init(c.allocator);
@@ -165,7 +227,9 @@ pub fn msg_sync_block(c: *client.Client, quad: *game.Quad) !void {
     defer compressed_stream.deinit();
     var compressed_writer = compressed_stream.writer();
     try compressed_writer.writeByte(@intFromEnum(MsgID.sync_block));
-    try std.compress.zlib.compress(stream.reader(), compressed_writer, .{ .level = .default });
+    try std.compress.zlib.compress(stream.reader(), compressed_writer, .{
+            .level = .default
+    });
     client.WebsocketHandler.write(c.handle, compressed_stream.items, false) catch |err| {
         std.log.err("Failed to write message: {any}", .{err});
         return err;

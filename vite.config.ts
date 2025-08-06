@@ -12,6 +12,7 @@ export default ({ mode }) => {
       open: true,
     },
     build: {
+      minify: "esbuild",
       assetsDir: "",
     },
   });

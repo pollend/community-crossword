@@ -1,0 +1,11 @@
+<LifecycleConfiguration>
+    <Rule>
+        <ID>Expire Sessions</ID>
+        <Prefix>profile/</Prefix>
+        <Status>Enabled</Status>
+        <Expiration>
+            <Days>15</Days>
+        </Expiration>
+    </Rule>
+</LifecycleConfiguration>
+

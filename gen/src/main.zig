@@ -5,10 +5,10 @@ const set = @import("ziglangSet");
 const csv = @import("csv");
 const assert = std.debug.assert;
 const word_dfs = @import("word_dfs.zig");
-pub const WIDTH = 512;
-pub const HEIGHT = 512;
-//pub const WIDTH = 8;
-//pub const HEIGHT = 8;
+pub const WIDTH = 384;
+pub const HEIGHT = 384;
+//pub const WIDTH = 64;
+//pub const HEIGHT = 64;
 
 pub const MAGIC_NUMBER: u32 = 0x1F9F1E9f; 
 pub const BLOCK_CHAR = '@'; // Character used to represent a blocked cell
@@ -588,6 +588,7 @@ fn can_start_clue_here(
     if (pos[0] >= WIDTH or pos[1] >= HEIGHT) {
         return false;
     }
+
     const cell = get_cell(board, pos);
     if(dir == .Down and cell.crossing_y == null) {
         if(pos[1] == 0) {
@@ -695,7 +696,7 @@ pub fn main() !void {
             answer: []const u8,
         };
         std.debug.print("fetching clues from database...\n", .{});
-        var stmt = try db.prepare("SELECT clue, answer FROM crossword WHERE LENGTH(answer) >= 3");
+        var stmt = try db.prepare("SELECT clue, answer FROM crossword WHERE LENGTH(answer) >= 3 AND LENGTH(answer) >= 3");
         defer stmt.deinit();
         var iter = try stmt.iterator(Row, .{});
         var inserted: usize = 0;

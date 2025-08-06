@@ -7,6 +7,7 @@ const rect = @import("rect.zig");
 const aws = @import("aws");
 const net = @import("net.zig");
 const WebsocketHandler = WebSockets.Handler(client.Client);
+const high_score_table = @import("high_score_table.zig");
 
 const stb_writer = @cImport({
     @cInclude("stb_image_write.h");
@@ -14,11 +15,12 @@ const stb_writer = @cImport({
 
 pub const ClientArrayList = std.ArrayList(*client.Client);
 pub const ClueList = std.ArrayList(Clue);
+pub const HighscoreTable100 = high_score_table.FixedHighscoreTable(100);
 pub const assert = std.debug.assert;
 
 pub const GRID_SIZE: u32 = 16;
 pub const GRID_LEN: u32 = GRID_SIZE * GRID_SIZE;
-pub const BACKUP_TIME_STAMP: i64 = std.time.s_per_min * 30;
+pub const BACKUP_TIME_STAMP: i64 = std.time.s_per_min; // std.time.s_per_min * 30;
 pub const MAP_GENERATION_TIME: i64 = std.time.s_per_min * 60;
 pub const SYNC_GAME_STATE_TIME: i64 = std.time.s_per_min * 1;
 pub const INACTIVE_TIMEOUT: i64 = std.time.s_per_min * 5; 
@@ -58,8 +60,118 @@ pub const Value = enum(u7) {
     x,
     y,
     z,
-};
 
+    pub fn value_to_char(value: Value) u8 {
+        return switch(value) {
+            .empty => ' ',
+            .dash => '-',
+            .a => 'a',
+            .b => 'b',
+            .c => 'c',
+            .d => 'd',
+            .e => 'e',
+            .f => 'f',
+            .g => 'g',
+            .h => 'h',
+            .i => 'i',
+            .j => 'j',
+            .k => 'k',
+            .l => 'l',
+            .m => 'm',
+            .n => 'n',
+            .o => 'o',
+            .p => 'p',
+            .q => 'q',
+            .r => 'r',
+            .s => 's',
+            .t => 't',
+            .u => 'u',
+            .v => 'v',
+            .w => 'w',
+            .x => 'x',
+            .y => 'y',
+            .z => 'z',
+            else => {return ' ';}
+        };
+    }
+
+    pub fn char_to_value(c: u8) Value{
+            return switch (c) {
+                'a', 'A' => Value.a,
+                'b', 'B' => Value.b,
+                'c', 'C' => Value.c,
+                'd', 'D' => Value.d,
+                'e', 'E' => Value.e,
+                'f', 'F' => Value.f,
+                'g', 'G' => Value.g,
+                'h', 'H' => Value.h,
+                'i', 'I' => Value.i,
+                'j', 'J' => Value.j,
+                'k', 'K' => Value.k,
+                'l', 'L' => Value.l,
+                'm', 'M' => Value.m,
+                'n', 'N' => Value.n,
+                'o', 'O' => Value.o,
+                'p', 'P' => Value.p,
+                'q', 'Q' => Value.q,
+                'r', 'R' => Value.r,
+                's', 'S' => Value.s,
+                't', 'T' => Value.t,
+                'u', 'U' => Value.u,
+                'v', 'V' => Value.v,
+                'w', 'W' => Value.w,
+                'x', 'X' => Value.x,
+                'y', 'Y' => Value.y,
+                'z', 'Z' => Value.z,
+                '-', ' ' => Value.dash, // space or dash
+                else => return error.InvalidCharacter, // Invalid character
+            };
+    }
+
+    pub fn calculate_score_u8(word: []const u8) u32 {
+        var score: u32 = 0;
+        for(word) |cc| {
+            const value = char_to_value(cc) catch  {
+                continue;
+            }; 
+            if (value == Value.empty or value == Value.black) {
+                continue;
+            }
+            score += switch(value) {
+                .a, .e, .i, .o, .u, .l, .n, .s, .t, .r => 1,
+                .d, .g => 2,
+                .b, .c, .m, .p =>  3,
+                .f, .h, .v, .w, .y => 4,
+                .k =>  5,
+                .j, .x => 8,
+                .q, .z => 10,
+                else => 0 
+            };
+        }
+        return score;
+        
+    }
+
+    pub fn calculate_score(word: []Value) u32 {
+        var score: u32 = 0;
+        for(word) |value| {
+            if (value == Value.empty or value == Value.black) {
+                continue;
+            }
+            score += switch(value) {
+                .a, .e, .i, .o, .u, .l, .n, .s, .t, .r => 1,
+                .d, .g => 2,
+                .b, .c, .m, .p =>  3,
+                .f, .h, .v, .w, .y => 4,
+                .k =>  5,
+                .j, .x => 8,
+                .q, .z => 10,
+                else => 0 
+            };
+        }
+        return score;
+    }
+};
 
 pub fn to_cell_index(global_cell_pos: @Vector(2, u32)) usize {
     const local_cell_pos = global_cell_pos % @Vector(2, u32){ GRID_SIZE, GRID_SIZE };
@@ -252,7 +364,6 @@ pub const Board = struct {
     quads: []Quad,
     clues: ClueList,
     allocator: std.mem.Allocator,
-
     clues_completed: std.atomic.Value(u32),
 
     pub fn deinit(self: *Board) void {
@@ -271,6 +382,9 @@ pub const Board = struct {
         key: []const u8,
         options: aws.Options
     ) !void {
+        const load_cache = try std.fmt.allocPrint(allocator, "{s}.cache", .{key});
+        defer allocator.free(load_cache);
+
         var buffer = std.ArrayList(u8).initCapacity(allocator, self.size[0] * self.size[1] * GRID_LEN) catch |err| {
             std.log.err("Failed to create backup buffer: {any}", .{err});
             return err;
@@ -283,7 +397,7 @@ pub const Board = struct {
         };
         const result = aws.Request(aws.services.s3.put_object).call(.{
             .bucket = bucket,
-            .key = key,
+            .key = load_cache,
             .content_type = "application/octet-stream",
             .body = buffer.items,
             .storage_class = "STANDARD",
@@ -342,6 +456,35 @@ pub const Board = struct {
                 unreachable;
             }
         }
+    }
+
+    pub fn load_s3(
+        allocator: std.mem.Allocator,
+        bucket: []const u8,
+        key: []const u8,
+        options: aws.Options,
+    ) !Board {
+        const load_map = try std.fmt.allocPrint(allocator, "{s}.map", .{key});
+        defer allocator.free(load_map);
+        const load_cache = try std.fmt.allocPrint(allocator, "{s}.cache", .{key});
+        defer allocator.free(load_cache);
+
+        const map_resp = try aws.Request(aws.services.s3.get_object).call(.{
+            .bucket = bucket,
+            .key = load_map,
+        }, options);
+        defer map_resp.deinit();
+        var stream = std.io.fixedBufferStream(map_resp.response.body orelse "");
+        var reader = stream.reader();
+
+        const cache_resp = try aws.Request(aws.services.s3.get_object).call(.{
+            .bucket = bucket,
+            .key = load_cache,
+        },options);
+        defer cache_resp.deinit();
+        var cache_stream = std.io.fixedBufferStream(cache_resp.response.body orelse "");
+        var cache_reader = cache_stream.reader();
+        return try game.Board.load(allocator, reader.any(),cache_reader.any());
     }
 
     pub fn load(
@@ -611,6 +754,30 @@ pub const Board = struct {
 
     }
 
+    pub fn lock_quads_client_shared(
+        self: *Board,
+        quad_rect: rect.Rect
+    ) void {
+        var iter = quad_rect.iterator();
+        while (iter.next()) |pos| {
+            if(game.to_quad_index(pos, game.to_quad_size(self.size))) |idx| {
+                self.quads[idx].client_lock.lockShared();
+            }
+        }
+    }
+
+    pub fn unlock_quads_client_shared(
+        self: *Board,
+        quad_rect: rect.Rect
+    ) void {
+        var iter = quad_rect.iterator();
+        while (iter.next()) |pos| {
+            if(game.to_quad_index(pos, game.to_quad_size(self.size))) |idx| {
+                self.quads[idx].client_lock.unlockShared();
+            }
+        }
+    }
+
     pub fn lock_quads(self: *Board, quad_rect: rect.Rect) void {
         var iter = quad_rect.iterator();
         while (iter.next()) |pos| {
@@ -814,7 +981,7 @@ pub fn background_worker() void {
             state.board.write_cache_s3(
                 state.gpa,
                 state.bucket,
-                state.crossword_cache,
+                state.map_key,
                 .{
                     .region = state.region,
                     .client = state.aws_client,
@@ -822,32 +989,54 @@ pub fn background_worker() void {
             ) catch |err| {
                 std.log.err("Failed to write board cache to S3: {any}", .{err});
             };
+
+            state.global.commit_s3(
+                "global",
+                state.gpa,
+                state.bucket,
+                .{
+                    .region = state.region,
+                    .client = state.aws_client,
+                },
+            ) catch |err| {
+                std.log.err("Failed to write global highscores: {any}", .{err});
+            };
         }
         if(std.time.timestamp() - state.sync_game_state_timestamp >= SYNC_GAME_STATE_TIME) {
-            std.log.info("Syncing game state...", .{});
             state.sync_game_state_timestamp = std.time.timestamp();
             state.client_lock.lock();
             defer state.client_lock.unlock();
             for(state.clients.items) |cur_client| {
-                net.msg_broadcast_game_state(cur_client, &state.board, state.clients.items.len) catch |err| {
+                net.msg_broadcast_game_state(cur_client, &state.board) catch |err| {
                     std.log.err("Failed to sync game state for client {d}: {any}", .{cur_client.client_id, err});
                 };
             }
         }
-        if(std.time.timestamp() - state.generate_map_timestamp >= MAP_GENERATION_TIME) {
-            std.log.info("Generating crossword map...", .{});
-            state.generate_map_timestamp = std.time.timestamp();
-            background_write_map();
-        }
+
+        //if(std.time.timestamp() - state.generate_map_timestamp >= MAP_GENERATION_TIME) {
+        //    state.generate_map_timestamp = std.time.timestamp();
+        //    //background_write_map();
+        //}
         update_clients() catch |err| {
             std.log.err("Failed to update clients: {any}", .{err});
         };
         std.time.sleep(std.time.ns_per_ms * 200);
     }
+    game.state.global.commit_s3(
+        "global",
+        state.gpa,
+        state.bucket,
+        .{
+            .region = state.region,
+            .client = state.aws_client,
+        },
+    ) catch |err| {
+        std.log.err("Failed to write global highscores: {any}", .{err});
+    };
     game.state.board.write_cache_s3(
         state.gpa,
         state.bucket,
-        state.crossword_cache,
+        state.map_key,
         .{
             .region = state.region,
             .client = state.aws_client,
@@ -856,7 +1045,6 @@ pub fn background_worker() void {
         std.log.err("Failed to write board cache to S3: {any}", .{err});
     };
 }
-
 
 pub const State = struct {
     client_id: u32,
@@ -868,12 +1056,13 @@ pub const State = struct {
     sync_game_state_timestamp: i64,
     running: std.atomic.Value(bool),
 
-    crossword_map: []const u8,
-    crossword_cache: []const u8,
+    map_key: []const u8,
 
     bucket: []const u8,
     region: []const u8,
-    aws_client: aws.Client, 
+    aws_client: aws.Client,
+
+    global: HighscoreTable100,
 
     gpa: std.mem.Allocator,
     board: Board,

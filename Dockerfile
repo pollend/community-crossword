@@ -23,7 +23,7 @@ WORKDIR /app
 COPY . .
 
 RUN npm install
-RUN npm run build
+RUN VITE_APP_URL='https://community-crossword.com/' VITE_APP_S3='https://crossword.sfo3.digitaloceanspaces.com' VITE_WS_URL='wss://community-crossword.com' npm run build
 
 # Build the application
 RUN zig build --release=safe -Dtarget=x86_64-linux 

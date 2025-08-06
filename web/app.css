@@ -1,1 +1,6 @@
+@import url('https://fonts.googleapis.com/css2?family=Mozilla+Headline:wght@200..700&family=Rhodium+Libre&display=swap');
 @import "tailwindcss";
+
+@theme {  
+  --font-headline:  "Rhodium Libre", sans-serif; 
+}

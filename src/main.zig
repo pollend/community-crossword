@@ -5,6 +5,8 @@ const client = @import("client.zig");
 const game = @import("game.zig");
 const rect = @import("rect.zig");
 const aws = @import("aws");
+const evict_fifo = @import("evict_fifo.zig");
+const profile_session = @import("profile_session.zig");
 
 fn on_upgrade(r: zap.Request, target_protocol: []const u8) !void {
     // make sure we're talking the right protocol
@@ -79,7 +81,6 @@ fn load_board(allocator: std.mem.Allocator, path: []const u8, board_width: *u32,
                 return err;
             },
         };
-
         const word_len = reader.readInt(u32, .little) catch |e| switch (e) {
             error.EndOfStream => break,
             else => |err| {
@@ -150,7 +151,6 @@ pub fn main() !void {
 
     var port: u16 = 3010; 
     var crossword_map: []const u8 = undefined;
-    var crossword_cache: []const u8 = undefined;
     var threads: i16 = 1;
     var bucket: []const u8  = undefined;
     var region: []const u8  = undefined;
@@ -161,17 +161,17 @@ pub fn main() !void {
         port = 3010;
     }
 
-    if(try __get_env_var(allocator, "CROSSWORD_MAP")) |str| {
+    if(try __get_env_var(allocator, "CROSSWORD_LOAD")) |str| {
         crossword_map = str;
     } else {
-        crossword_map = "crossword.map";
+        crossword_map = "crossword";
     }
     
-    if(try __get_env_var(allocator, "CROSSWORD_CACHE")) |str| {
-        crossword_cache = str;
-    } else {
-        crossword_cache  = "crossword.cache";
-    }
+    //if(try __get_env_var(allocator, "CROSSWORD_CACHE")) |str| {
+    //    crossword_cache = str;
+    //} else {
+    //    crossword_cache  = "crossword.cache";
+    //}
 
     if(try __get_env_var(allocator, "THREADS")) |thread_str| {
         threads = try __parse_env_integer(i16, thread_str, "THREADS");
@@ -198,7 +198,15 @@ pub fn main() !void {
 
     var aws_client = aws.Client.init(allocator,.{});
     defer aws_client.deinit();
-        
+
+    const global_scores = game.HighscoreTable100.restore_s3("global", allocator, bucket, .{
+        .client = aws_client,
+        .region = region, 
+    }) catch tbl: {
+        std.log.err("Failed to restore global highscore table from S3, starting with empty table.", .{});
+        break :tbl game.HighscoreTable100.init(allocator);
+    };
+
     game.state = .{
         .gpa = allocator,
         .clients = std.ArrayList(*client.Client).init(allocator),
@@ -208,9 +216,9 @@ pub fn main() !void {
         .generate_map_timestamp = 0,
         .sync_game_state_timestamp = 0, 
         .running = std.atomic.Value(bool).init(true),
+        .global = global_scores,
 
-        .crossword_cache = crossword_cache,
-        .crossword_map = crossword_map,
+        .map_key = crossword_map,
 
         .bucket = bucket,
         .region = region,
@@ -218,33 +226,11 @@ pub fn main() !void {
    
         .board = undefined,
     };
-
     // load the crossword map 
-    {
-        const map_resp = try aws.Request(aws.services.s3.get_object).call(.{
-            .bucket = bucket,
-            .key = crossword_map,
-        }, .{
-            .region = region,
-            .client = aws_client,
-        });
-        defer map_resp.deinit();
-        var stream = std.io.fixedBufferStream(map_resp.response.body orelse "");
-        var reader = stream.reader();
-
-        const cache_resp = try aws.Request(aws.services.s3.get_object).call(.{
-            .bucket = bucket,
-            .key = crossword_cache,
-        }, .{
-            .region = region,
-            .client = aws_client,
-        });
-        defer cache_resp.deinit();
-        var cache_stream = std.io.fixedBufferStream(cache_resp.response.body orelse "");
-        var cache_reader = cache_stream.reader();
-        game.state.board = try game.Board.load(allocator, reader.any(),cache_reader.any());
-    }
-  
+    game.state.board = try game.Board.load_s3(allocator, bucket, crossword_map, . {
+        .client = aws_client,
+        .region = region,
+    });
     var background_worker = try std.Thread.spawn(.{}, game.background_worker, .{});
     var listener = zap.HttpListener.init(
         .{
@@ -280,4 +266,6 @@ pub fn main() !void {
 const expect = std.testing.expect;
 test {
     _ = rect;
+    _ = evict_fifo;
+    _ = profile_session;
 }

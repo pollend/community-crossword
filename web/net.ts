@@ -1,11 +1,11 @@
 import { Point, Rectangle } from "pixi.js";
-import { Clue, NetSyncBlock } from "./types";
-import { GRID_SIZE, GRID_CELL_PX } from "./constants";
+import { Clue, Direction, NetSyncBlock } from "./types";
+import { GRID_SIZE, GRID_CELL_PX, SESSION_ID_LENGTH } from "./constants";
 import pako from "pako";
 
 const lastSyncedView = new Rectangle(0, 0, 0, 0);
 const lastCursorPosition = new Point(0, 0);
-export enum MessageID {
+export const enum MessageID {
   ready = 0,
   set_view = 1,
   sync_block = 2,
@@ -13,9 +13,12 @@ export enum MessageID {
   sync_cursors = 4,
   sync_cursors_delete = 5,
   broadcast_game_state = 6,
+  update_nick = 7,
+  session_negotiation = 8,
+  solve_clue = 9,
 }
 
-export enum Value {
+export const enum Value {
   empty, // empty cell
   dash, // space/dash
   black, // black cell
@@ -55,7 +58,7 @@ export function cellToValue(value: number): Value {
   return value & 0x7f;
 }
 export function valueToChar(value: Value): string {
-  switch (value) {
+  switch (value & 0x7f) {
     case Value.dash:
       return "-";
     case Value.empty:
@@ -114,6 +117,10 @@ export function valueToChar(value: Value): string {
       return "Z";
   }
   throw new Error(`Unknown value ${value}`);
+}
+
+export function isEmptyValue(value: Value): boolean {
+  return value === Value.empty || value === Value.dash;
 }
 
 export function charToValue(c: string): Value | undefined {
@@ -204,19 +211,47 @@ export function charToValue(c: string): Value | undefined {
   return undefined;
 }
 
+export function netParseSolveClue(
+  view: DataView,
+  offset: number,
+): {
+  owner: boolean;
+  x: number;
+  y: number;
+  dir: Direction;
+  values: Value[];
+} {
+  const flags = view.getUint8(offset);
+  offset += 1;
+  const dir: Direction = flags & 0x3; // 0 = horizontal, 1 = vertical
+  const owner: boolean = (flags & 0x8) > 0;
+  const x = view.getUint32(offset, true);
+  offset += 4;
+  const y = view.getUint32(offset, true);
+  offset += 4;
+  const values: Value[] = [];
+  while (offset < view.byteLength) {
+    values.push(view.getUint8(offset));
+    offset += 1;
+  }
+  return {
+    owner: owner,
+    x: x,
+    y: y,
+    dir: dir,
+    values: values,
+  };
+}
+
 export function netParseGameState(
   view: DataView,
   offset: number,
 ): {
-  num_player: number;
   progress: number;
 } {
-  const num_players = view.getUint32(offset, true);
-  offset += 4;
   const percent = view.getFloat32(offset, true);
   offset += 4;
   return {
-    num_player: num_players,
     progress: percent,
   };
 }
@@ -296,14 +331,6 @@ export function netParseReady(view: DataView, offset: number) {
   };
 }
 
-export function netParsePong(view: DataView, offset: number) {
-  const percentage = view.getFloat32(offset, true);
-  offset += 4;
-  return {
-    percentage: percentage,
-  };
-}
-
 export function netParseSyncChunk(
   compressed_view: DataView,
   offset: number,
@@ -361,6 +388,68 @@ export function netSendCell(ws: WebSocket, x: number, y: number, value: Value) {
   view.setUint32(offset, y, true);
   offset += 4;
   view.setUint8(offset, value);
+  ws.send(buffer);
+}
+
+export function netParseNick(view: DataView, offset: number): string {
+  let nick = "";
+  while (offset < view.byteLength) {
+    nick += String.fromCharCode(view.getUint8(offset));
+    offset += 1;
+  }
+  return nick;
+}
+
+export function netParseSessionNegotiation(
+  view: DataView,
+  offset: number,
+): {
+  session: string;
+  nick: string;
+} {
+  let session = "";
+  let nick = "";
+  for (let i = 0; i < SESSION_ID_LENGTH; i++) {
+    const c = String.fromCharCode(view.getUint8(offset));
+    offset += 1;
+    session += c;
+  }
+  const nick_length = view.getUint8(offset);
+  offset += 1;
+  for (let i = 0; i < nick_length; i++) {
+    const c = String.fromCharCode(view.getUint8(offset));
+    offset += 1;
+    nick += c;
+  }
+  return {
+    session: session,
+    nick: nick,
+  };
+}
+
+export function netSendNick(ws: WebSocket, nick: string) {
+  const buffer = new ArrayBuffer(1 + nick.length);
+  let offset = 0;
+  const view = new DataView(buffer);
+  view.setUint8(offset, MessageID.update_nick);
+  offset += 1;
+  for (const c of nick) {
+    view.setUint8(offset, c.charCodeAt(0));
+    offset += 1;
+  }
+  ws.send(buffer);
+}
+
+export function netSendSessionNegotiation(ws: WebSocket, session: string) {
+  const buffer = new ArrayBuffer(1 + session.length);
+  let offset = 0;
+  const view = new DataView(buffer);
+  view.setUint8(offset, MessageID.session_negotiation);
+  offset += 1;
+  for (const c of session) {
+    view.setUint8(offset, c.charCodeAt(0));
+    offset += 1;
+  }
   ws.send(buffer);
 }
 

@@ -20,7 +20,6 @@ services:
       - ./src:/app/src:ro
       - ./build.zig:/app/build.zig:ro
       - ./build.zig.zon:/app/build.zig.zon:ro
-      - ./crossword.map:/app/crossword.map:ro
       - ./dist:/app/dist
     depends_on:
       - web-dev
@@ -40,7 +39,7 @@ services:
       - ./svelte.config.js:/app/svelte.config.js:ro
       - ./eslint.config.mjs:/app/eslint.config.mjs:ro
       - ./index.html:/app/index.html:ro
-    command: sh -c "npm install && VITE_APP_URL='http://localhost:3010' VITE_WS_URL='ws://localhost:3010' npm run dev -- --host 0.0.0.0"
+    command: sh -c "npm install && VITE_APP_URL='http://localhost:3010' VITE_APP_S3='http://localhost:9000/test-bucket/' VITE_WS_URL='ws://localhost:3010' npm run dev -- --host 0.0.0.0"
   minio:
     image: quay.io/minio/minio:latest
     container_name: minio_server
@@ -59,11 +58,14 @@ services:
     depends_on:
       - minio
     restart: on-failure
+    volumes:
+      - ./lifecycle_policy.xml:/lifecycle_policy.xml
     entrypoint: >
       /bin/sh -c "
       sleep 5;
       /usr/bin/mc alias set dockerminio http://minio:9000 minioadmin minioadmin;
       /usr/bin/mc mb dockerminio/test-bucket;
+      /usr/bin/mc anonymous set public dockerminio/test-bucket;
       exit 0;
       "
 volumes:
