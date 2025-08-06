@@ -17,7 +17,7 @@ pub const FifoSolved = evict_fifo.EvictingFifo(Solved, MAX_WORD_QUEUE_LENGTH);
 pub const Solved = struct {
     utc: i64,
     clue: []const u8,
-    word: []const u8,
+    word: []const game.Value,
 
     pub fn deinit(self: *Solved, alloc: std.mem.Allocator) void {
         alloc.free(self.clue);
@@ -137,14 +137,10 @@ pub fn push_solved_clue(
 ) !Solved {
     const clue = try self.allocator.dupe(u8, cl.clue[0..]);
     errdefer self.allocator.free(clue);
-    const word = try self.allocator.alloc(u8, cl.word.len);
-    for (cl.word, 0..) |w,idx| {
-        word[idx] = game.Value.value_to_char(w);
-    }
+    const word = try self.allocator.dupe(game.Value, cl.word[0..]);
     errdefer self.allocator.free(word);
     self.score += game.Value.calculate_score(cl.word);
     self.num_clues_solved += 1;
-    errdefer self.allocator.free(word);
     const solved = Solved{
         .utc = std.time.timestamp(),
         .clue = clue,
@@ -176,12 +172,17 @@ pub fn write(
         while (iter.next()) |it| : (i += 1) {
            try writer.writeInt(i64, it.utc, .little);
            try writer.writeInt(u16, @intCast(it.word.len), .little);
-           try writer.writeAll(it.word);
+           try writer.writeAll(@as([]const u8,@ptrCast(it.word)));
            try writer.writeInt(u16, @intCast(it.clue.len), .little);
            try writer.writeAll(it.clue); 
         }
         std.debug.assert(i == solves_len);
     }
+    std.debug.print("Wrote profile session: {s} with {d} clues solved, score: {d}\n", .{
+        self.session_id,
+        self.num_clues_solved,
+        self.score,
+    });
 }
 
 
@@ -219,12 +220,19 @@ pub fn load(
             var i: usize = 0;
             while(i < solves_len) : (i += 1) {
                 const utc = try reader.readInt(i64, .little);
+                
                 const word_len = try reader.readInt(u16, .little);
-                const word = try reader.readAllAlloc(allocator, word_len);
+                var word = try allocator.alloc(game.Value, word_len);
                 errdefer allocator.free(word);
+                if(try reader.readAll(@as([]u8,@ptrCast(word[0..word_len]))) != word_len) {
+                    return error.EndOfStream;
+                }
                 const clue_len = try reader.readInt(u16, .little);
-                const clue = try reader.readAllAlloc(allocator, clue_len);
+                const clue = try allocator.alloc(u8, clue_len);
                 errdefer allocator.free(clue);
+                if(try reader.readAll(clue[0..clue_len]) != clue_len) {
+                    return error.EndOfStream;
+                }
                 if(session.words_solved.push(.{
                     .utc = utc,
                     .word = word,
@@ -240,6 +248,48 @@ pub fn load(
     }
     return error.UnsupportedSessionVersion;
 }
+
+test "serialize and deserialize" {
+    const allocator = std.testing.allocator;
+    var session = try ProfileSession.empty(allocator);
+    defer session.deinit();
+   
+    var clue = try game.Clue.init_from_ascii(
+        allocator,
+        "test",
+        "A test clue",
+        .{0,0},
+        .Across
+    );
+    defer clue.deinit();
+
+    try session.set_nick_name("TestUser");
+    _ = try session.push_solved_clue(&clue);
+    
+    var buffer = std.ArrayList(u8).init(allocator);
+    defer buffer.deinit();
+    var writer = buffer.writer();
+    try session.write(writer.any());
+
+    var stream = std.io.fixedBufferStream(buffer.items);
+    var reader = stream.reader();
+    
+    var loaded_session = try ProfileSession.load(allocator, session.session_id[0..], reader.any());
+    defer loaded_session.deinit();
+
+    try std.testing.expectEqualSlices(u8, session.session_id[0..], loaded_session.session_id[0..]);
+    try std.testing.expectEqual(session.nick_len, loaded_session.nick_len);
+    try std.testing.expectEqualSlices(u8, session.nick[0..session.nick_len], loaded_session.nick[0..loaded_session.nick_len]);
+    try std.testing.expectEqual(session.num_clues_solved, loaded_session.num_clues_solved);
+    try std.testing.expectEqual(session.score, loaded_session.score);
+    try std.testing.expectEqual(session.words_solved.length(), loaded_session.words_solved.length());
+    try std.testing.expectEqualSlices(
+        game.Value,
+        session.words_solved.last().?.word,
+       clue.word[0..] 
+    );
+}
+
 
 //pub fn load_session_from_s3(
 //    allocator: std.mem.Allocator,

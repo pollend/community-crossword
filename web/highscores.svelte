@@ -34,13 +34,6 @@
     }
   }
 
-  // Sort scores by score descending, then by words completed descending
-  //$: sortedScores = [...scores].sort((a, b) => {
-  //  if (a.score !== b.score) {
-  //    return b.score - a.score;
-  //  }
-  //  return b.wordsCompleted - a.wordsCompleted;
-  //});
 </script>
 
 <!-- Slide-out panel -->

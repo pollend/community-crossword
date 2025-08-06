@@ -221,16 +221,22 @@ fn on_message_websocket(
                         try net.msg_send_session_negotiation(c, &c.profile);
                         return;
                     };
-                    std.log.debug("Restoring session: {s}", .{profile.get_nick_name() orelse "Unknown"});
                     c.profile.deinit();
                     c.profile = profile;
+                    std.log.debug("Restoring session: {s}", .{c.profile.get_nick_name() orelse "Unknown"});
+                    try net.msg_send_session_negotiation(c, &c.profile);
+                } else {
+                    // If the session negotiation fails disconnect the client
+                    WebsocketHandler.close(c.handle);
                 }
-                try net.msg_send_session_negotiation(c, &c.profile);
             },
             .update_nick => {
                 const msg = try net.msg_parse_update_nick(reader.any());
                 c.profile.set_nick_name(msg.nick[0..msg.nick_len]) catch |err| {
                     std.log.err("Failed to set nick name: {any}", .{err});
+                };
+                game.state.global.process(&c.profile) catch |err| {
+                    std.log.err("Failed to process global highscore: {any}", .{err});
                 };
                 try net.msg_send_nick(c, c.profile.get_nick_name() orelse "");
             },
@@ -273,23 +279,28 @@ fn on_message_websocket(
                     {
                         board.quads[update_quad_idx].client_lock.lock();
                         defer board.quads[update_quad_idx].client_lock.unlock();
-                        var cell = &board.quads[update_quad_idx].input[game.to_cell_index(input.pos)];
+                        var cell: *game.Cell = &board.quads[update_quad_idx].input[game.to_cell_index(input.pos)];
                         if(cell.lock == 1) {
                             return; // Cell is locked, ignore the input
                         }
                         cell.value = input.input;
+                        for(board.quads[update_quad_idx].clients.items) |cl| {
+                            net.msg_sync_cell(cl, input.pos, cell.*) catch |err| {
+                                std.log.err("Failed to sync cell to client: {any}", .{err});
+                            };
+                        }
                     }
-                    var dirty_cells = std.ArrayList(@Vector(2, u32)).init(game.state.gpa);
-                    defer dirty_cells.deinit();
-                    try dirty_cells.append(input.pos);
                     {
                         var tmp: [@sizeOf(*game.Clue) * 6]u8 = undefined;
                         var fba = std.heap.FixedBufferAllocator.init(&tmp);
                         var clues = try std.ArrayList(*game.Clue).initCapacity(fba.allocator(), 6);
                         try board.quads[update_quad_idx].get_crossing_clues(input.pos, &clues);
-                        next_clue: for (clues.items) |cl| {
-                            const clue_rect = cl.to_rect();
+
+                        next_clue: for (clues.items) |current_clue| {
+                            const clue_rect = current_clue.to_rect();
                             const clue_quad_rect = game.map_to_quad(clue_rect);
+                            game.state.board.lock_quads_client_shared(clue_quad_rect);
+                            defer game.state.board.unlock_quads_client_shared(clue_quad_rect);
                             game.state.board.lock_quads(clue_quad_rect);
                             defer game.state.board.unlock_quads(clue_quad_rect);
                             {
@@ -297,7 +308,7 @@ fn on_message_websocket(
                                 var idx: usize = 0;
                                 while (clue_pos_iter.next()) |clue_pos|: (idx += 1) {
                                     if(game.to_quad_index(game.map_to_quad_pos(clue_pos), game.to_quad_size(board.size))) |clue_quad_idx| {
-                                        if(board.quads[clue_quad_idx].input[game.to_cell_index(clue_pos)].value != cl.word[idx]) {
+                                        if(board.quads[clue_quad_idx].input[game.to_cell_index(clue_pos)].value != current_clue.word[idx]) {
                                             continue :next_clue; 
                                         }
                                     } else {
@@ -305,37 +316,31 @@ fn on_message_websocket(
                                         continue :next_clue; 
                                     }
                                 }
-                                _ = c.profile.push_solved_clue(cl) catch |err| {
-                                    std.log.err("Failed to push solved clue: {any}", .{err});
-                                }; 
                             }
                             {
+                                _ = c.profile.push_solved_clue(current_clue) catch |err| {
+                                    std.log.err("Failed to push solved clue: {any}", .{err});
+                                };
+                                game.state.global.process(&c.profile) catch |err| {
+                                    std.log.err("Failed to process global highscore: {any}", .{err});
+                                };
                                 _ = board.clues_completed.fetchAdd(1, .seq_cst);
+                                if(game.to_quad_index(game.map_to_quad_pos(current_clue.pos), game.to_quad_size(board.size))) |clue_quad_idx| {
+                                    for (board.quads[clue_quad_idx].clients.items) |other_clients| {
+                                        net.msg_sync_solved_clue(other_clients, current_clue, other_clients == c) catch |err| {
+                                            std.log.err("Failed to sync clue to client: {any}", .{err});
+                                        };
+                                    }
+                                } else unreachable;
 
                                 var clue_pos_iter = clue_rect.iterator();
                                 while (clue_pos_iter.next()) |clue_pos| {
                                     if(game.to_quad_index(game.map_to_quad_pos(clue_pos), game.to_quad_size(board.size))) |clue_quad_idx| {
                                         var cell = &board.quads[clue_quad_idx].input[game.to_cell_index(clue_pos)];
                                         cell.lock = 1;
-                                        if (!contains_simd2(dirty_cells.items, clue_pos)) {
-                                            try dirty_cells.append(clue_pos);
-                                        }
                                     } else unreachable;
                                 }
                             }
-                        }
-                        for (dirty_cells.items) |dirty_pos| {
-                            if(game.to_quad_index(game.map_to_quad_pos(dirty_pos), game.to_quad_size(board.size))) |dirty_quad_idx| {
-                                board.quads[dirty_quad_idx].client_lock.lockShared();
-                                defer board.quads[dirty_quad_idx].client_lock.unlockShared();
-                                board.quads[dirty_quad_idx].lock.lockShared();
-                                defer board.quads[dirty_quad_idx].lock.unlockShared();
-                                for (board.quads[dirty_quad_idx].clients.items) |cl| {
-                                    net.msg_sync_cell(cl, dirty_pos, board.quads[dirty_quad_idx].input[game.to_cell_index(dirty_pos)]) catch |err| {
-                                        std.log.err("Failed to sync cell to client: {any}", .{err});
-                                    };
-                                }
-                            } else unreachable;
                         }
 
                     }

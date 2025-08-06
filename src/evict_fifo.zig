@@ -18,6 +18,14 @@ pub fn EvictingFifo(
             };
         }
 
+        pub fn last(self: *Self) ?T {
+            if (self.tail_index == self.head_index) {
+                return null; // queue is empty
+            }
+            const last_index = (self.head_index + size - 1) % size;
+            return self.items[last_index];
+        }
+
         pub fn length(self: *Self) usize {
             if (self.tail_index == self.head_index) {
                 return 0; // queue is empty
@@ -47,14 +55,14 @@ pub fn EvictingFifo(
 
         // apped a value to the lifo and return the oldest value if the queue is full
         pub fn push(self: *Self, value: T) ?T {
-            var last: ?T = null;
+            var it: ?T = null;
             if ((self.head_index + 1) % size == self.tail_index) {
-                last = self.items[self.tail_index];
+                it= self.items[self.tail_index];
                 self.tail_index = (self.tail_index + 1) % size;
             } 
             self.items[self.head_index] = value;
             self.head_index = (self.head_index + 1) % size;
-            return last;
+            return it;
         }
     };
 }

@@ -60,7 +60,6 @@ services:
     restart: on-failure
     volumes:
       - ./lifecycle_policy.xml:/lifecycle_policy.xml
-      - ./public_policy.json:/public_policy.json
     entrypoint: >
       /bin/sh -c "
       sleep 5;

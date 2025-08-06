@@ -6,6 +6,7 @@ const game = @import("game.zig");
 const rect = @import("rect.zig");
 const aws = @import("aws");
 const evict_fifo = @import("evict_fifo.zig");
+const profile_session = @import("profile_session.zig");
 
 fn on_upgrade(r: zap.Request, target_protocol: []const u8) !void {
     // make sure we're talking the right protocol
@@ -198,7 +199,15 @@ pub fn main() !void {
 
     var aws_client = aws.Client.init(allocator,.{});
     defer aws_client.deinit();
-        
+
+    const global_scores = game.HighscoreTable100.restore_s3("global", allocator, bucket, .{
+        .client = aws_client,
+        .region = region, 
+    }) catch tbl: {
+        std.log.err("Failed to restore global highscore table from S3, starting with empty table.", .{});
+        break :tbl game.HighscoreTable100.init(allocator);
+    };
+
     game.state = .{
         .gpa = allocator,
         .clients = std.ArrayList(*client.Client).init(allocator),
@@ -208,6 +217,7 @@ pub fn main() !void {
         .generate_map_timestamp = 0,
         .sync_game_state_timestamp = 0, 
         .running = std.atomic.Value(bool).init(true),
+        .global = global_scores,
 
         .crossword_cache = crossword_cache,
         .crossword_map = crossword_map,
@@ -281,4 +291,5 @@ const expect = std.testing.expect;
 test {
     _ = rect;
     _ = evict_fifo;
+    _ = profile_session;
 }

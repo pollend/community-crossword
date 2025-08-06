@@ -7,6 +7,7 @@ const rect = @import("rect.zig");
 const aws = @import("aws");
 const net = @import("net.zig");
 const WebsocketHandler = WebSockets.Handler(client.Client);
+const high_score_table = @import("high_score_table.zig");
 
 const stb_writer = @cImport({
     @cInclude("stb_image_write.h");
@@ -14,11 +15,12 @@ const stb_writer = @cImport({
 
 pub const ClientArrayList = std.ArrayList(*client.Client);
 pub const ClueList = std.ArrayList(Clue);
+pub const HighscoreTable100 = high_score_table.FixedHighscoreTable(100);
 pub const assert = std.debug.assert;
 
 pub const GRID_SIZE: u32 = 16;
 pub const GRID_LEN: u32 = GRID_SIZE * GRID_SIZE;
-pub const BACKUP_TIME_STAMP: i64 = std.time.s_per_min * 30;
+pub const BACKUP_TIME_STAMP: i64 = std.time.s_per_min; // std.time.s_per_min * 30;
 pub const MAP_GENERATION_TIME: i64 = std.time.s_per_min * 60;
 pub const SYNC_GAME_STATE_TIME: i64 = std.time.s_per_min * 1;
 pub const INACTIVE_TIMEOUT: i64 = std.time.s_per_min * 5; 
@@ -362,7 +364,6 @@ pub const Board = struct {
     quads: []Quad,
     clues: ClueList,
     allocator: std.mem.Allocator,
-
     clues_completed: std.atomic.Value(u32),
 
     pub fn deinit(self: *Board) void {
@@ -721,6 +722,30 @@ pub const Board = struct {
 
     }
 
+    pub fn lock_quads_client_shared(
+        self: *Board,
+        quad_rect: rect.Rect
+    ) void {
+        var iter = quad_rect.iterator();
+        while (iter.next()) |pos| {
+            if(game.to_quad_index(pos, game.to_quad_size(self.size))) |idx| {
+                self.quads[idx].client_lock.lockShared();
+            }
+        }
+    }
+
+    pub fn unlock_quads_client_shared(
+        self: *Board,
+        quad_rect: rect.Rect
+    ) void {
+        var iter = quad_rect.iterator();
+        while (iter.next()) |pos| {
+            if(game.to_quad_index(pos, game.to_quad_size(self.size))) |idx| {
+                self.quads[idx].client_lock.unlockShared();
+            }
+        }
+    }
+
     pub fn lock_quads(self: *Board, quad_rect: rect.Rect) void {
         var iter = quad_rect.iterator();
         while (iter.next()) |pos| {
@@ -932,6 +957,18 @@ pub fn background_worker() void {
             ) catch |err| {
                 std.log.err("Failed to write board cache to S3: {any}", .{err});
             };
+
+            state.global.commit_s3(
+                "global",
+                state.gpa,
+                state.bucket,
+                .{
+                    .region = state.region,
+                    .client = state.aws_client,
+                },
+            ) catch |err| {
+                std.log.err("Failed to write global highscores: {any}", .{err});
+            };
         }
         if(std.time.timestamp() - state.sync_game_state_timestamp >= SYNC_GAME_STATE_TIME) {
             state.sync_game_state_timestamp = std.time.timestamp();
@@ -953,6 +990,17 @@ pub fn background_worker() void {
         };
         std.time.sleep(std.time.ns_per_ms * 200);
     }
+    game.state.global.commit_s3(
+        "global",
+        state.gpa,
+        state.bucket,
+        .{
+            .region = state.region,
+            .client = state.aws_client,
+        },
+    ) catch |err| {
+        std.log.err("Failed to write global highscores: {any}", .{err});
+    };
     game.state.board.write_cache_s3(
         state.gpa,
         state.bucket,
@@ -965,7 +1013,6 @@ pub fn background_worker() void {
         std.log.err("Failed to write board cache to S3: {any}", .{err});
     };
 }
-
 
 pub const State = struct {
     client_id: u32,
@@ -982,7 +1029,9 @@ pub const State = struct {
 
     bucket: []const u8,
     region: []const u8,
-    aws_client: aws.Client, 
+    aws_client: aws.Client,
+
+    global: HighscoreTable100,
 
     gpa: std.mem.Allocator,
     board: Board,

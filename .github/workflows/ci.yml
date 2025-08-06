@@ -12,7 +12,7 @@ env:
 
 jobs:
   # Web frontend build and test
-  web-frontend:
+  publish:
     name: Build Web Frontend
     runs-on: ubuntu-latest
     
@@ -30,18 +30,16 @@ jobs:
       run: npm ci
 
     - name: Type check and build
-      run: VITE_WS_URL='wss://squid-app-tq2pb.ondigitalocean.app/' npm run build
+      run: VITE_WS_URL='wss://squid-app-tq2pb.ondigitalocean.app/' VITE_APP_S3='https://crossword.sfo3.digitaloceanspaces.com/' npm run build
 
-    - name: Install Butler
+    - name: Upload to Itch.io
+      if: github.ref == 'refs/heads/master'
+      env:
+        BUTLER_API_KEY: ${{ secrets.BUTLER_API_KEY }}
       run: |
         curl -L -o butler.zip https://broth.itch.ovh/butler/linux-amd64/LATEST/archive/default
         unzip butler.zip
         chmod +x butler
         ./butler -V
-      
-    - name: Upload to Itch.io
-      env:
-        BUTLER_API_KEY: ${{ secrets.BUTLER_API_KEY }}
-      run: |
         ./butler login
         ./butler push dist mpollind/community-crossword:html

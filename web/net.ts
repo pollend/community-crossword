@@ -1,5 +1,5 @@
 import { Point, Rectangle } from "pixi.js";
-import { Clue, NetSyncBlock } from "./types";
+import { Clue, Direction, NetSyncBlock } from "./types";
 import { GRID_SIZE, GRID_CELL_PX, SESSION_ID_LENGTH } from "./constants";
 import pako from "pako";
 
@@ -15,6 +15,7 @@ export const enum MessageID {
   broadcast_game_state = 6,
   update_nick = 7,
   session_negotiation = 8,
+  solve_clue = 9,
 }
 
 export const enum Value {
@@ -57,7 +58,7 @@ export function cellToValue(value: number): Value {
   return value & 0x7f;
 }
 export function valueToChar(value: Value): string {
-  switch (value) {
+  switch (value & 0x7f) {
     case Value.dash:
       return "-";
     case Value.empty:
@@ -116,6 +117,10 @@ export function valueToChar(value: Value): string {
       return "Z";
   }
   throw new Error(`Unknown value ${value}`);
+}
+
+export function isEmptyValue(value: Value): boolean {
+  return value === Value.empty || value === Value.dash;
 }
 
 export function charToValue(c: string): Value | undefined {
@@ -204,6 +209,38 @@ export function charToValue(c: string): Value | undefined {
       return Value.z;
   }
   return undefined;
+}
+
+export function netParseSolveClue(
+  view: DataView,
+  offset: number,
+): {
+  owner: boolean;
+  x: number;
+  y: number;
+  dir: Direction;
+  values: Value[];
+} {
+  const flags = view.getUint8(offset);
+  offset += 1;
+  const dir: Direction = flags & 0x3; // 0 = horizontal, 1 = vertical
+  const owner: boolean = (flags & 0x8) > 0;
+  const x = view.getUint32(offset, true);
+  offset += 4;
+  const y = view.getUint32(offset, true);
+  offset += 4;
+  const values: Value[] = [];
+  while (offset < view.byteLength) {
+    values.push(view.getUint8(offset));
+    offset += 1;
+  }
+  return {
+    owner: owner,
+    x: x,
+    y: y,
+    dir: dir,
+    values: values,
+  };
 }
 
 export function netParseGameState(
@@ -363,22 +400,21 @@ export function netParseNick(view: DataView, offset: number): string {
   return nick;
 }
 
-
 export function netParseSessionNegotiation(
   view: DataView,
   offset: number,
 ): {
   session: string;
   nick: string;
-}{
+} {
   let session = "";
   let nick = "";
-  for(let i = 0; i < SESSION_ID_LENGTH; i++ ) {
+  for (let i = 0; i < SESSION_ID_LENGTH; i++) {
     const c = String.fromCharCode(view.getUint8(offset));
     offset += 1;
     session += c;
   }
-  let nick_length = view.getUint8(offset);
+  const nick_length = view.getUint8(offset);
   offset += 1;
   for (let i = 0; i < nick_length; i++) {
     const c = String.fromCharCode(view.getUint8(offset));
@@ -405,7 +441,7 @@ export function netSendNick(ws: WebSocket, nick: string) {
 }
 
 export function netSendSessionNegotiation(ws: WebSocket, session: string) {
-  const buffer = new ArrayBuffer(1 + 4 + session.length);
+  const buffer = new ArrayBuffer(1 + session.length);
   let offset = 0;
   const view = new DataView(buffer);
   view.setUint8(offset, MessageID.session_negotiation);

@@ -15,6 +15,7 @@ pub const MsgID = enum(u8) {
     broadcast_game_state = 6,
     update_nick = 7,
     session_negotiation = 8,
+    solved_clue = 9,
     unknown 
 };
 
@@ -30,6 +31,27 @@ pub fn msg_broadcast_game_state(c: *client.Client, board: *game.Board) !void {
     var writer = buffer.writer();
     try writer.writeByte(@intFromEnum(MsgID.broadcast_game_state));
     try writer.writeInt(u32, @bitCast(@as(f32, @floatFromInt(board.clues_completed.load(.unordered))) / @as(f32, @floatFromInt(board.clues.items.len))), .little);
+    client.WebsocketHandler.write(c.handle, buffer.items, false) catch |err| {
+        std.log.err("Failed to write message: {any}", .{err});
+        return err;
+    };
+}
+
+pub fn msg_sync_solved_clue(c: *client.Client, clue: *game.Clue, owner: bool) !void {
+    var buffer = std.ArrayList(u8).init(c.allocator);
+    defer buffer.deinit();
+    var writer = buffer.writer();
+    try writer.writeByte(@intFromEnum(MsgID.solved_clue));
+    var flags: u8 = @intFromEnum(clue.dir);
+    if(owner) {
+        flags |= 0x8; // Set the owner bit
+    }
+    try writer.writeInt(u8, flags, .little);
+    try writer.writeInt(u32, clue.pos[0], .little);
+    try writer.writeInt(u32, clue.pos[1], .little);
+    for(clue.word) |w| {
+        try writer.writeInt(u8, @intFromEnum(w), .little);
+    }
     client.WebsocketHandler.write(c.handle, buffer.items, false) catch |err| {
         std.log.err("Failed to write message: {any}", .{err});
         return err;
