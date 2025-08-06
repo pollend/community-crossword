@@ -617,7 +617,7 @@ pub const Board = struct {
             if(cache_reader) |reader| {
                 const cache_magic = reader.readInt(u32, .little) catch |e| {
                     std.log.err("Failed to read map cache file: {any}", .{e});
-                    return e;
+                    break :invalid_cache;
                 };
                 if (cache_magic != MAP_CACHE_MAGIC_NUMBER) {
                     std.log.err("Invalid map cache file magic number: expected {x}, got {x}", .{MAP_CACHE_MAGIC_NUMBER, cache_magic});
@@ -625,11 +625,11 @@ pub const Board = struct {
                 }
                 _ = reader.readByte() catch |e| {
                     std.log.err("Failed to read map cache file: {any}", .{e});
-                    return e;
+                    break :invalid_cache;
                 };
                 const cache_uid = reader.readInt(u32, .little) catch |e| {
                     std.log.err("Failed to read map cache file: {any}", .{e});
-                    return e;
+                    break :invalid_cache;
                 };
                 if( cache_uid != uid) {
                     std.log.err("UID mismatch: expected {d}, got {d}", .{uid, cache_uid});
@@ -637,11 +637,11 @@ pub const Board = struct {
                 }
                 const cache_width = reader.readInt(u32, .little) catch |e| {
                     std.log.err("Failed to read map cache file: {any}", .{e});
-                    return e;
+                    break :invalid_cache;
                 };
                 const cache_height = reader.readInt(u32, .little) catch |e| {
                     std.log.err("Failed to read map cache file: {any}", .{e});
-                    return e;
+                    break :invalid_cache;
                 };
                 if (cache_width != board_width or cache_height != board_height) {
                     std.log.err("Size mismatch: expected {d}x{d}, got {d}x{d}", .{board_width, board_height, cache_width, cache_height});

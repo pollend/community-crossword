@@ -696,7 +696,7 @@ pub fn main() !void {
             answer: []const u8,
         };
         std.debug.print("fetching clues from database...\n", .{});
-        var stmt = try db.prepare("SELECT clue, answer FROM crossword WHERE LENGTH(answer) >= 3 AND LENGTH(answer) >= 3");
+        var stmt = try db.prepare("SELECT clue, answer FROM crossword WHERE LENGTH(answer) >= 3 AND LENGTH(answer) >= 3 AND NOT (UPPER(answer) LIKE UPPER('%Across%') OR UPPER(answer) LIKE UPPER('%down%'));");
         defer stmt.deinit();
         var iter = try stmt.iterator(Row, .{});
         var inserted: usize = 0;

@@ -417,7 +417,6 @@
       let offset = 0;
       const msgid = view.getUint8(offset); // Read the message ID
       offset += 1;
-      console.log("Received message ID:", msgid);
       switch (msgid) {
         case MessageID.ready: {
           const readyPkt = netParseReady(view, offset);
@@ -586,7 +585,7 @@
           }
           case MouseState.Clicking: {
             if(isMobile.any) {
-              showKeyboard = true; 
+              showKeyboard = true;
             }
             const pp = ev.getLocalPosition(mainStage);
             const center = new Point(
@@ -634,10 +633,7 @@
 
     app.ticker.add((_) => {
       const size = viewSize();
-      {
-        app.canvas.height = size.x
-
-      }
+      app.canvas.height =frame!.clientWidth 
 
       const rect = getViewRect();
       mainStage.pivot.set(rect.x, rect.y);
@@ -858,8 +854,6 @@
   </div>
 
   <div class="flex-4 flex flex-col overflow-hidden mt-15">
-
-
     <div class="mb-3 flex">
       <!-- community-crossword -->
       <div class="flex-auto">
@@ -962,7 +956,7 @@
 
 </div>
 
-<Keyboard visible={showKeyboard} keypress={handleInput} backpress={backPress} close={() => showKeyboard = false}></Keyboard>
+<Keyboard visible={showKeyboard} keypress={handleInput} close={() => showKeyboard = false}></Keyboard>
 <Highscores isOpen={activePanel == ActivePanel.Highscores} close={() => activePanel = ActivePanel.None}/>
 <Profile updateNick={(nick) => {
   netSendNick(socket!, nick);

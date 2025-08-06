@@ -1,11 +1,11 @@
 <script lang="ts">
   import { clickOutside } from './clickOutside';
-  let { visible = false, keypress, backpress, close }: {visible: boolean, backpress: () => void, keypress: (c: string) => void, close:() => void} = $props();
+  let { visible = false, keypress, close }: {visible: boolean, keypress: (c: string) => void, close:() => void} = $props();
 </script>
 
 {#if visible}
   <!-- Keyboard Container -->
-  <div class="fixed bottom-0 left-0 right-0 bg-gray-100 border-t border-gray-300 z-50 p-4 pb-6" use:clickOutside onClickOutside={close}>
+  <div class="fixed bottom-0 left-0 right-0 bg-gray-100 border-t border-gray-300 z-50 p-4 pb-6">
     <div class="space-y-2">
       {#each [
         ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
