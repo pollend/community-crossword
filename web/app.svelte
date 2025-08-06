@@ -860,11 +860,9 @@
   <div class="flex-4 flex flex-col overflow-hidden mt-15">
 
     <ins class="adsbygoogle"
-        style="display:block"
-        data-ad-client="ca-pub-9118570546154001"
-        data-ad-slot="5528739759"
-        data-ad-format="auto"
-        data-full-width-responsive="true"></ins>
+      style="display:inline-block;width:728px;height:90px"
+      data-ad-client="ca-pub-9118570546154001"
+      data-ad-slot="5528739759"></ins>
     <script>
       (adsbygoogle = window.adsbygoogle || []).push({});
     </script>
