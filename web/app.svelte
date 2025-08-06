@@ -859,13 +859,7 @@
 
   <div class="flex-4 flex flex-col overflow-hidden mt-15">
 
-    <ins class="adsbygoogle"
-      style="display:inline-block;width:728px;height:90px"
-      data-ad-client="ca-pub-9118570546154001"
-      data-ad-slot="5528739759"></ins>
-    <script>
-      (adsbygoogle = window.adsbygoogle || []).push({});
-    </script>
+
     <div class="mb-3 flex">
       <!-- community-crossword -->
       <div class="flex-auto">
@@ -889,6 +883,14 @@
         ???
       {/if}
     </div>
+
+    <ins class="adsbygoogle"
+      style="display:inline-block;width:728px;height:90px"
+      data-ad-client="ca-pub-9118570546154001"
+      data-ad-slot="5528739759"></ins>
+    <script>
+      (adsbygoogle = window.adsbygoogle || []).push({});
+    </script>
   </div>
   <div class="flex-3 text-black block hidden md:block mt-10">
     <div class="flex">
@@ -957,6 +959,7 @@
       </div>
     </div> -->
   </div>
+
 </div>
 
 <Keyboard visible={showKeyboard} keypress={handleInput} backpress={backPress} close={() => showKeyboard = false}></Keyboard>
