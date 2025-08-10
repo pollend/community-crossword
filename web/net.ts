@@ -14,8 +14,7 @@ export const enum MessageID {
   sync_cursors_delete = 5,
   broadcast_game_state = 6,
   update_nick = 7,
-  session_negotiation = 8,
-  solve_clue = 9,
+  solved_clue = 8,
 }
 
 export const enum Value {
@@ -325,9 +324,18 @@ export function netParseReady(view: DataView, offset: number) {
   offset += 4;
   const height = view.getUint32(offset, true);
   offset += 4;
+  const num_cluse_solved = view.getUint32(offset, true);
+  offset += 4;
+  const score = view.getUint32(offset, true);
+  offset += 4;
+  const uid = view.getUint32(offset, true);
+  offset += 4;
   return {
+    num_clues_solved: num_cluse_solved,
+    score: score,
     board_width: width,
     board_height: height,
+    uid: uid,
   };
 }
 
@@ -439,19 +447,19 @@ export function netSendNick(ws: WebSocket, nick: string) {
   }
   ws.send(buffer);
 }
-
-export function netSendSessionNegotiation(ws: WebSocket, session: string) {
-  const buffer = new ArrayBuffer(1 + session.length);
-  let offset = 0;
-  const view = new DataView(buffer);
-  view.setUint8(offset, MessageID.session_negotiation);
-  offset += 1;
-  for (const c of session) {
-    view.setUint8(offset, c.charCodeAt(0));
-    offset += 1;
-  }
-  ws.send(buffer);
-}
+//
+//export function netSendSessionNegotiation(ws: WebSocket, session: string) {
+//  const buffer = new ArrayBuffer(1 + session.length);
+//  let offset = 0;
+//  const view = new DataView(buffer);
+//  view.setUint8(offset, MessageID.session_negotiation);
+//  offset += 1;
+//  for (const c of session) {
+//    view.setUint8(offset, c.charCodeAt(0));
+//    offset += 1;
+//  }
+//  ws.send(buffer);
+//}
 
 export function netSendViewRect(
   ws: WebSocket,

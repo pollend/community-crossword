@@ -20,13 +20,11 @@
     netParseGameState,
     netParseNick,
     netParseReady,
-    netParseSessionNegotiation,
     netParseSolveClue,
     netParseSyncChunk,
     netParseSyncCursors,
     netSendCell,
     netSendNick,
-    netSendSessionNegotiation,
     netSendViewRect,
     Value
   } from "./net";
@@ -37,13 +35,12 @@
   import { graphicDrawRect } from "./graphic";
   import { Debounce, Throttle } from "./timing";
   import { Direction, type Clue, MouseState } from "./types";
-  import { GRID_CELL_PX, GRID_SIZE } from "./constants";
+  import { DEFAULT_NICKS, GRID_CELL_PX, GRID_SIZE, UNIQUE_STR } from "./constants";
   import 'pixi.js/math-extras';
-  import { writable } from "svelte/store";
   import { ProfileSession } from "./profile";
-    import { HighscoreTable } from "./highscoreTable";
+  import { HighscoreTable } from "./highscoreTable";
+    import { Global } from "./state";
 
-  const SESSION_KEY = "a7407d0e-5821-4e07-8259-fcaa2228987a";
   interface CursorState {
     clientId: number;
     positions: Point[];
@@ -51,15 +48,18 @@
   };
 
   const profileSession = new ProfileSession();
-  setContext("profile", profileSession)
   const globalHighscores = new HighscoreTable("global")
+  const global = new Global();
+  global.globalHighScore = globalHighscores;
+  global.profile = profileSession;
+  setContext("global", global);
+  setContext("profile", profileSession)
   setContext("globalHighscores", globalHighscores);
 
   let frame: HTMLDivElement | undefined = $state.raw(undefined);
   let app: Application = new Application();
   let mainStage: Container = new Container();
   let socket: WebSocket | undefined = undefined;
-  setContext("socket", socket);
 
   let mouse: MouseState = MouseState.None;
   let cursorPos = new Point(0, 0);
@@ -74,7 +74,6 @@
   let showKeyboard: boolean = $state(false);
   let highlightSlotsVertical: number[] = $state([]);
   let highlightSlotHorizontal: number[] = $state([]);
-  const nickStore = writable<string>('');
 
   const enum ActivePanel {
     None,
@@ -404,13 +403,16 @@
   onMount(async () => {
     await app.init({ background: "#FFFFFF", resizeTo: frame});
     frame!.appendChild(app.canvas);
-
-    if(import.meta.env.VITE_WS_URL) {
-      socket = new WebSocket(`${import.meta.env.VITE_WS_URL}`);
-    } else {
-      const protocol = window.location.protocol.includes('https') ? 'wss': 'ws'
-      socket = new WebSocket(`${protocol}://${location.host}`);
+    const response = await fetch(`${import.meta.env.VITE_APP_URL}/refresh`, {
+      method: "GET",
+      mode: 'cors',
+      credentials: 'include',
+    });
+    if (!response.ok) {
+      return;
     }
+    socket = new WebSocket(`${import.meta.env.VITE_WS_URL}`);
+    global.socket = socket; 
     socket.binaryType = "arraybuffer";
     socket.onmessage = function (e) {
       const view = new DataView(e.data);
@@ -426,19 +428,17 @@
             (boardSize.x * GRID_CELL_PX) * Math.random(),
             (boardSize.y * GRID_CELL_PX) * Math.random(),
           );
+          netSendNick(socket!, window.localStorage.getItem(`nick-${UNIQUE_STR}`) || DEFAULT_NICKS[Math.floor(Math.random() * DEFAULT_NICKS.length)]);
+          global.initialize(readyPkt.uid);
+          profileSession.score.set(readyPkt.score);
+          profileSession.num_clues.set(readyPkt.num_clues_solved);
           syncViewThrottle.trigger();
-          netSendSessionNegotiation(socket!, window.localStorage.getItem(SESSION_KEY) || ""); // will send an empty key if not set
           break;
         }
         case MessageID.update_nick: {
-          nickStore.set(netParseNick(view, offset));
-          break;
-        }
-        case MessageID.session_negotiation: {
-          let msg = netParseSessionNegotiation(view, offset);
-          nickStore.set(msg.nick);
-          profileSession.load(msg.session);
-          window.localStorage.setItem(SESSION_KEY, msg.session);
+          const nick = netParseNick(view, offset);
+          console.log(nick);
+          global.nick.set(nick)
           break;
         }
         case MessageID.input_or_sync_cell: {
@@ -473,7 +473,7 @@
           refreshQuads.trigger();
           break;
         }
-        case MessageID.solve_clue: {
+        case MessageID.solved_clue: {
           const net_solve = netParseSolveClue(view, offset);
           const qq: Quad[] = []
           if(net_solve.owner) {
@@ -503,6 +503,10 @@
           for(const q of qq) {
             q.update();
           }
+          fetch(`${import.meta.env.VITE_APP_URL}/refresh`, {
+            mode: 'cors',
+            credentials: 'include',
+          });
           break;
         }
         case MessageID.sync_cursors_delete: 
@@ -877,14 +881,6 @@
         ???
       {/if}
     </div>
-
-    <ins class="adsbygoogle"
-      style="display:inline-block;width:728px;height:90px"
-      data-ad-client="ca-pub-9118570546154001"
-      data-ad-slot="5528739759"></ins>
-    <script>
-      (adsbygoogle = window.adsbygoogle || []).push({});
-    </script>
   </div>
   <div class="flex-3 text-black block hidden md:block mt-10">
     <div class="flex">
@@ -958,9 +954,7 @@
 
 <Keyboard visible={showKeyboard} keypress={handleInput} close={() => showKeyboard = false}></Keyboard>
 <Highscores isOpen={activePanel == ActivePanel.Highscores} close={() => activePanel = ActivePanel.None}/>
-<Profile updateNick={(nick) => {
-  netSendNick(socket!, nick);
-}} displayStore={nickStore} isOpen={activePanel == ActivePanel.Profile} close={() => activePanel = ActivePanel.None}/>
+<Profile isOpen={activePanel == ActivePanel.Profile} close={() => activePanel = ActivePanel.None}/>
 
 <!-- Buy Me a Coffee - Floating Button -->
 <div class="fixed bottom-6 right-6 z-30">

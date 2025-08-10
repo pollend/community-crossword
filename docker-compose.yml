@@ -18,6 +18,7 @@ services:
       - "THREADS=4"
     volumes:
       - ./src:/app/src:ro
+      - ./deps:/app/deps:ro
       - ./build.zig:/app/build.zig:ro
       - ./build.zig.zon:/app/build.zig.zon:ro
       - ./dist:/app/dist

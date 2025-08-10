@@ -8,11 +8,13 @@ const aws = @import("aws");
 const net = @import("net.zig");
 const WebsocketHandler = WebSockets.Handler(client.Client);
 const high_score_table = @import("high_score_table.zig");
+const profile_session = @import("profile_session.zig");
 
 const stb_writer = @cImport({
     @cInclude("stb_image_write.h");
 });
 
+pub const ClientLookupMap = std.AutoHashMap(u64, *client.Client);
 pub const ClientArrayList = std.ArrayList(*client.Client);
 pub const ClueList = std.ArrayList(Clue);
 pub const HighscoreTable100 = high_score_table.FixedHighscoreTable(100);
@@ -232,7 +234,7 @@ pub const Direction = enum(u1) {
 };
 
 pub const Clue = struct {
-    id: u32 = 0, // Unique ID for the clue
+    index: u32 = 0, // Unique ID for the clue
     word: []Value,
     clue: []const u8,
     pos: @Vector(2, u32),
@@ -275,7 +277,7 @@ pub const Clue = struct {
         }
         return .{
             .word = value,
-            .id = 0, // ID will be set later
+            .index = 0, // ID will be set later
             .clue = try allocator.dupe(u8, clue),
             .pos = pos,
             .dir = dir,
@@ -668,10 +670,10 @@ pub const Board = struct {
         }
         
         {
-            var id: u32 = 0;
+            var clue_idx: u32 = 0;
             for (clues.items) |*clue| {
-                id += 1;
-                clue.id = id; // Assign a unique ID to the clue
+                clue.index = clue_idx; // Assign a unique ID to the clue
+                clue_idx += 1;
                 if (to_quad_index(map_to_quad_pos(clue.pos), quad_size)) |idx| {
                     quads[idx].clues.append(clue) catch |err| {
                         std.log.err("Failed to append clue to quad: {any}", .{err});
@@ -927,7 +929,11 @@ pub fn update_clients() !void {
 
     const now = std.time.timestamp();
     const quad_size = game.to_quad_size(state.board.size);
-    for(state.clients.items) |cur_client| {
+    var value_iter = state.client_lookup.valueIterator();
+    while (value_iter.next()) |ptr_client| {
+        var cur_client = ptr_client.*;
+        cur_client.lock.lock();
+        defer cur_client.lock.unlock();
         visible_cursors.clearRetainingCapacity();
         if(now - cur_client.active_timestamp >= INACTIVE_TIMEOUT) {
             try disconnect_clients.append(cur_client); 
@@ -1006,9 +1012,12 @@ pub fn background_worker() void {
             state.sync_game_state_timestamp = std.time.timestamp();
             state.client_lock.lock();
             defer state.client_lock.unlock();
-            for(state.clients.items) |cur_client| {
-                net.msg_broadcast_game_state(cur_client, &state.board) catch |err| {
-                    std.log.err("Failed to sync game state for client {d}: {any}", .{cur_client.client_id, err});
+            var value_iter = state.client_lookup.valueIterator();
+            while (value_iter.next()) |cur_client| {
+                cur_client.*.lock.lock();
+                defer cur_client.*.lock.unlock();
+                net.msg_broadcast_game_state(cur_client.*, &state.board) catch |err| {
+                    std.log.err("Failed to sync game state for client {d}: {any}", .{cur_client.*.client_id, err});
                 };
             }
         }
@@ -1049,14 +1058,16 @@ pub fn background_worker() void {
 pub const State = struct {
     client_id: u32,
     client_lock: std.Thread.Mutex.Recursive,
-    clients: ClientArrayList,
+    client_lookup: ClientLookupMap,
 
     backup_timestamp: i64,
     generate_map_timestamp: i64,
     sync_game_state_timestamp: i64,
     running: std.atomic.Value(bool),
 
+    session_key: [profile_session.KEY_LENGTH]u8,
     map_key: []const u8,
+    domain: []const u8,
 
     bucket: []const u8,
     region: []const u8,
@@ -1065,6 +1076,8 @@ pub const State = struct {
     global: HighscoreTable100,
 
     gpa: std.mem.Allocator,
+    client_pool: std.heap.MemoryPool(client.Client),
+
     board: Board,
 };
 pub var state: State = undefined;

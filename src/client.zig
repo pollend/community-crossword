@@ -8,10 +8,14 @@ const aws = @import("aws");
 const resiliance = @import("resiliance.zig");
 const profile_session = @import("profile_session.zig");
 pub const WebsocketHandler = WebSockets.Handler(Client);
+pub const nanoid = @import("nanoid.zig");
+pub const SESSION_COOKIE_ID = "_session";
 
+pub const NICK_MAX_LENGTH: usize = 64;
 
 pub const Client = @This();
 pub const InputRateLimiter = resiliance.rate_limiter(15, 5 * std.time.ms_per_s, 10 * std.time.ms_per_s);
+pub const NickBoundedArray = std.BoundedArray(u8, NICK_MAX_LENGTH);
 
 pub const TrackedCursors = struct {
     client_id: u32,
@@ -36,7 +40,7 @@ pub fn is_cursor_within_view(cell_rect: rect.Rect, pos: @Vector(2, u32)) bool {
     return rect.contains_point(cell_rect, pos / @Vector(2, u32){game.CELL_PIXEL_SIZE, game.CELL_PIXEL_SIZE});
 }
 
-profile: profile_session.ProfileSession,
+session: profile_session.ProfileSession,
 lock: std.Thread.Mutex,
 handle: WebSockets.WsHandle,
 settings: WebsocketHandler.WebSocketSettings,
@@ -48,20 +52,42 @@ tracked_cursors_pos: std.ArrayList(TrackedCursors),
 client_id: u32 = 0, // Unique identifier for the client
 cursor_pos: @Vector(2, u32) = .{0,0},
 active_timestamp: i64 = 0, // Timestamp of the last activity from the client
-
+nick: NickBoundedArray,
 input_rate_limiter: InputRateLimiter = .{},
 
-
 pub fn upgrade(allocator: std.mem.Allocator, r: zap.Request) !*Client {
+    r.parseCookies(true);
+    const profile: profile_session.ProfileSession = profile: {
+        if(try r.getCookieStr(allocator, SESSION_COOKIE_ID)) |c| {
+            std.log.info("Found session cookie: {s}: {any}", .{c, c.len});
+            defer allocator.free(c);
+            if(profile_session.ProfileSession.parse_cookie(game.state.gpa, game.state.session_key, c) catch  |err| fl: {
+                std.log.err("Failed to parse session cookie: {any}", .{err});
+                break :fl null;
+            } ) |session| {
+                if(!session.is_expired()) {
+                    break :profile session;
+                }
+            } 
+        }
+        return error.InvalidCookie;
+    };
     game.state.client_lock.lock();
     defer game.state.client_lock.unlock();
-    const client = try game.state.gpa.create(Client);
-    errdefer client.deinit();
-    game.state.client_id += 1;
 
+    const res = try game.state.client_lookup.getOrPut(profile.profile_id);
+    if(res.found_existing) {
+        std.log.warn("Client with profile ID {any} already exists, reusing existing client", .{profile.profile_id});
+        return error.ClientAlreadyExists;
+    }
+    
+    const client = try game.state.gpa.create(Client);
+    res.value_ptr.* = client;
+    errdefer game.state.gpa.destroy(client);
+    game.state.client_id += 1;
     client.* = .{
         .lock = .{},
-        .profile = try profile_session.ProfileSession.empty(allocator),
+        .session = profile,
         .active_timestamp = std.time.timestamp(),
         .allocator = allocator,
         .handle = undefined,
@@ -69,6 +95,7 @@ pub fn upgrade(allocator: std.mem.Allocator, r: zap.Request) !*Client {
         .cell_rect = rect.empty(),
         .quad_rect = rect.empty(),
         .tracked_cursors_pos = std.ArrayList(TrackedCursors).init(allocator),
+        .nick = std.BoundedArray(u8, NICK_MAX_LENGTH).init(0) catch unreachable,
         .settings = .{ 
             .on_open = on_open_websocket, 
             .on_close = on_close_websocket,
@@ -76,76 +103,18 @@ pub fn upgrade(allocator: std.mem.Allocator, r: zap.Request) !*Client {
             .context = client },
         .ready = false,
     };
+    errdefer client.deinit();
     try WebsocketHandler.upgrade(r.h, &client.settings);
-    try game.state.clients.append(client);
     return client;
 }
 
 pub fn deinit(self: *Client) void {
     self.lock.lock();
     defer self.lock.unlock();
-    self.profile.deinit();
     self.tracked_cursors_pos.deinit();
     game.state.board.unregister_client_board(self, self.quad_rect);
 }
 
-//fn load_session(
-//    self: *Client,
-//    session_id: [profile_session.SESSION_ID_LENGTH]u8,
-//    bucket: []const u8,
-//    options: aws.Options
-//) !profile_session.ProfileSession {
-//    var buffer = std.ArrayList(u8).init(self.allocator);
-//    defer buffer.deinit();
-//    var key_buf: [64]u8 = undefined;
-//    const key = try std.fmt.bufPrint(
-//        key_buf[0..],
-//        "profile/{s}.profile",
-//        .{ session_id[0..]},
-//    );
-//    const session_resp = aws.Request(aws.services.s3.get_object).call(.{
-//        .bucket = bucket,
-//        .key = key
-//    }, options) catch |err| {
-//        std.log.err("Failed to load session from S3: {any}", .{err});
-//        return err;
-//    };
-//    defer session_resp.deinit();
-//    var stream = std.io.fixedBufferStream(session_resp.response.body orelse "");
-//    var reader = stream.reader();
-//    return try profile_session.load(self.allocator, reader.any());
-//}
-
-//fn commit_session(
-//    self: *Client,
-//    bucket: []const u8,
-//    options: aws.Options
-//) !void {
-//    var buffer = std.ArrayList(u8).init(self.allocator);
-//    defer buffer.deinit();
-//    var writer = buffer.writer();
-//    self.ses.write(writer.any()) catch |err| {
-//        std.log.err("Failed to write session data: {any}", .{err});
-//        return err;
-//    };
-//    var key_buf: [64]u8 = undefined;
-//    const key = try std.fmt.bufPrint(
-//        key_buf[0..],
-//        "profile/{s}.profile",
-//        .{ self.ses.session_id[0..]},
-//    );
-//    const result = aws.Request(aws.services.s3.put_object).call(.{
-//        .bucket = bucket,
-//        .key = key,
-//        .content_type = "application/octet-stream",
-//        .body = buffer.items,
-//        .storage_class = "STANDARD",
-//    }, options) catch |err| {
-//        std.log.err("Failed to upload backup to S3: {any}", .{err});
-//        return err;
-//    };
-//    defer result.deinit();
-//}
 
 fn on_close_websocket(client: ?*Client, _: isize) !void {
     std.log.info("Disconnection", .{});
@@ -155,37 +124,33 @@ fn on_close_websocket(client: ?*Client, _: isize) !void {
             // remove the client from the board
             game.state.client_lock.lock();
             defer game.state.client_lock.unlock();
-            var i: usize = 0;
-            while (i < game.state.clients.items.len) : (i += 1) {
-                if (game.state.clients.items[i] == c) {
-                    _ = game.state.clients.swapRemove(i);
-                    std.log.debug("Remove client from index {d}", .{i});
-                    break;
-                }
+            if(game.state.client_lookup.remove(c.session.profile_id)) {
+                std.log.debug("Removed client {any} from lookup", .{c.session.profile_id});
+            } else {
+                std.log.err("Client is untracked {any}", .{c.session.profile_id});
             }
+           // var i: usize = 0;
+           // while (i < game.state.clients.items.len) : (i += 1) {
+           //     if (game.state.clients.items[i] == c) {
+           //         _ = game.state.clients.swapRemove(i);
+           //         std.log.debug("Remove client from index {d}", .{i});
+           //         break;
+           //     }
+           // }
         }
-        c.profile.commit_profile_s3(
-            c.allocator,
-            game.state.bucket,
-            .{
-                .region = game.state.region,
-                .client = game.state.aws_client,
-            },
-        ) catch |err| {
-            std.log.err("Failed to commit session: {any}", .{err});
-        };
+        //c.profile.commit_profile_s3(
+        //    c.allocator,
+        //    game.state.bucket,
+        //    .{
+        //        .region = game.state.region,
+        //        .client = game.state.aws_client,
+        //    },
+        //) catch |err| {
+        //    std.log.err("Failed to commit session: {any}", .{err});
+        //};
         c.deinit();
         game.state.gpa.destroy(c);
     }
-}
-
-fn contains_simd2(a: []const @Vector(2, u32), b: @Vector(2, u32)) bool {
-    for (a) |item| {
-        if (std.simd.countTrues(item == b) == 2) {
-            return true;
-        }
-    }
-    return false;
 }
 
 fn on_message_websocket(
@@ -205,40 +170,13 @@ fn on_message_websocket(
             return;
         };
         switch (msg_id) {
-            .session_negotiation => {
-                if(try net.msg_parse_session_negotiation(reader.any())) |msg| {
-                    const profile = profile_session.load_profile_s3(c.allocator, msg.session_id[0..], game.state.bucket, .{
-                        .region = game.state.region,
-                        .client = game.state.aws_client,
-                    }) catch |err| {
-                        std.log.warn("Failed to load session using generated session: {any}", .{err});
-                        c.profile.commit_profile_s3(c.allocator, game.state.bucket,.{
-                            .region = game.state.region,
-                            .client = game.state.aws_client,
-                        }) catch |e2| {
-                            std.log.err("Failed to commit session: {any}", .{e2});
-                        };
-                        try net.msg_send_session_negotiation(c, &c.profile);
-                        return;
-                    };
-                    c.profile.deinit();
-                    c.profile = profile;
-                    std.log.debug("Restoring session: {s}", .{c.profile.get_nick_name() orelse "Unknown"});
-                    try net.msg_send_session_negotiation(c, &c.profile);
-                } else {
-                    try net.msg_send_session_negotiation(c, &c.profile);
-                }
-            },
             .update_nick => {
-                const msg = try net.msg_parse_update_nick(reader.any());
-                std.debug.print("updatin nick: {s} ({d})\n", .{msg.nick[0..msg.nick_len], msg.nick_len});
-                c.profile.set_nick_name(msg.nick[0..msg.nick_len]) catch |err| {
-                    std.log.err("Failed to set nick name: {any}", .{err});
+                c.nick = try reader.readBoundedBytes(NICK_MAX_LENGTH);
+                std.debug.print("updatin nick: {s}\n", .{c.nick.slice()});
+                game.state.global.update_nick(c.session.profile_id, c.nick.slice()) catch |err| {
+                    std.log.err("Failed to update nick: {any}", .{err});
                 };
-                game.state.global.process(&c.profile) catch |err| {
-                    std.log.err("Failed to process global highscore: {any}", .{err});
-                };
-                try net.msg_send_nick(c, c.profile.get_nick_name() orelse "");
+                try net.msg_send_nick(c, c.nick.slice());
             },
             .set_view => {
                 const board = &game.state.board;
@@ -318,10 +256,8 @@ fn on_message_websocket(
                                 }
                             }
                             {
-                                _ = c.profile.push_solved_clue(current_clue) catch |err| {
-                                    std.log.err("Failed to push solved clue: {any}", .{err});
-                                };
-                                game.state.global.process(&c.profile) catch |err| {
+                                c.session.update_solved(current_clue); 
+                                game.state.global.process(c.session.profile_id, c.nick.slice(), current_clue.clue[0..], c.session.score, c.session.num_clues_solved) catch |err| {
                                     std.log.err("Failed to process global highscore: {any}", .{err});
                                 };
                                 _ = board.clues_completed.fetchAdd(1, .seq_cst);
