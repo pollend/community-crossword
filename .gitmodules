@@ -1,3 +1,6 @@
 [submodule "deps/zap"]
 	path = deps/zap
 	url = https://github.com/pollend/zap.git
+[submodule "deps/aws-sdk-for-zig"]
+	path = deps/aws-sdk-for-zig
+	url = https://github.com/elerch/aws-sdk-for-zig.git
