@@ -23,6 +23,7 @@ pub const assert = std.debug.assert;
 pub const GRID_SIZE: u32 = 16;
 pub const GRID_LEN: u32 = GRID_SIZE * GRID_SIZE;
 pub const BACKUP_TIME_STAMP: i64 =  std.time.s_per_min * 120;
+pub const UPDATE_HIGH_SCORE_TIME: i64 = std.time.s_per_min * 15;
 pub const MAP_GENERATION_TIME: i64 = std.time.s_per_min * 60;
 pub const SYNC_GAME_STATE_TIME: i64 = std.time.s_per_min * 1;
 pub const INACTIVE_TIMEOUT: i64 = std.time.s_per_min * 5; 
@@ -981,6 +982,21 @@ pub fn update_clients() !void {
 
 pub fn background_worker() void {
     while(state.running.load(.monotonic)) {
+        if(std.time.timestamp() - state.update_highscore_timestamp >= UPDATE_HIGH_SCORE_TIME) {
+            std.log.info("Updating Highscores...", .{});
+            state.update_highscore_timestamp = std.time.timestamp();
+            state.global.commit_s3(
+                "global",
+                state.gpa,
+                state.bucket,
+                .{
+                    .region = state.region,
+                    .client = state.aws_client,
+                },
+            ) catch |err| {
+                std.log.err("Failed to write global highscores: {any}", .{err});
+            };
+        }
         if(std.time.timestamp() - state.backup_timestamp >= BACKUP_TIME_STAMP) {
             std.log.info("Creating game backup...", .{});
             state.backup_timestamp = std.time.timestamp();
@@ -994,18 +1010,6 @@ pub fn background_worker() void {
                 },
             ) catch |err| {
                 std.log.err("Failed to write board cache to S3: {any}", .{err});
-            };
-
-            state.global.commit_s3(
-                "global",
-                state.gpa,
-                state.bucket,
-                .{
-                    .region = state.region,
-                    .client = state.aws_client,
-                },
-            ) catch |err| {
-                std.log.err("Failed to write global highscores: {any}", .{err});
             };
         }
         if(std.time.timestamp() - state.sync_game_state_timestamp >= SYNC_GAME_STATE_TIME) {
@@ -1057,6 +1061,7 @@ pub const State = struct {
     client_lookup: ClientLookupMap,
 
     backup_timestamp: i64,
+    update_highscore_timestamp: i64 = 0,
     generate_map_timestamp: i64,
     sync_game_state_timestamp: i64,
     running: std.atomic.Value(bool),
