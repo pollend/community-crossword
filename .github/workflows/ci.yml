@@ -40,7 +40,7 @@ jobs:
       run: npm ci
 
     - name: Type check and build
-      run: VITE_WS_URL='wss://squid-app-tq2pb.ondigitalocean.app/' VITE_APP_S3='https://crossword.sfo3.digitaloceanspaces.com' npm run build
+      run: VITE_WS_URL='wss://community-crossword.com' VITE_APP_URL='https://community-crossword.com'  VITE_APP_S3='https://crossword.sfo3.digitaloceanspaces.com' npm run build
 
     - name: Upload to Itch.io
       if: github.ref == 'refs/heads/main'
