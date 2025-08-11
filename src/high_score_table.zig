@@ -166,7 +166,7 @@ pub fn FixedHighscoreTable(comptime size: usize) type {
             self: *Self,
             key: u64, 
             nick: []const u8,
-            last_word_solve: []game.Value,
+            last_word_solve: []const game.Value,
             score: u32,
             num_clues_solved: u32,
         ) !void {
@@ -242,17 +242,17 @@ test "Test HighScoreTable" {
     var table = TestTable.init(allocator);
 
     // Add some entries
-    try table.process(10, "Alice", "HELLO", 100, 5);
-    try table.process(20, "Bob", "WORLD", 150, 8);
-    try table.process(30, "Charlie", "TEST", 75, 3);
+    try table.process(10, "Alice",  &[_]game.Value{.h,.e,.l,.l,.o}, 100, 5);
+    try table.process(20, "Bob", &[_]game.Value{.w,.o,.r,.l,.d}, 150, 8);
+    try table.process(30, "Charlie", &[_]game.Value{.t,.e,.s,.t}, 75, 3);
 
     try std.testing.expectEqualSlices(u64,  &[_]u64{20, 10, 30}, table.keys[0..3]);
     try std.testing.expectEqual(3, table.num_entries);
     try std.testing.expectEqualSlices(u32,  &[_]u32{150, 100, 75}, table.scores[0..3]);
 
-    try table.process(40, "Dave", "ZIG", 200, 10);
-    try table.process(50, "Eve", "ZAG", 50, 2);
-    try table.process(150, "Eve", "ZAG", 500, 2);
+    try table.process(40, "Dave", &[_]game.Value{.z,.i,.g}, 200, 10);
+    try table.process(50, "Eve", &[_]game.Value{.z,.i,.g}, 50, 2);
+    try table.process(150, "Eve", &[_]game.Value{.z,.a,.g}, 500, 2);
     try std.testing.expectEqualSlices(u64,  &[_]u64{150, 40, 20, 10, 30}, table.keys[0..5]);
     try std.testing.expectEqual(5, table.num_entries);
     try std.testing.expectEqualSlices(u32,  &[_]u32{500, 200, 150, 100, 75}, table.scores[0..5]);
@@ -261,7 +261,7 @@ test "Test HighScoreTable" {
     try std.testing.expectEqualSlices(u8, table.table[2].nick.slice(), "Bob");
     try std.testing.expectEqualSlices(u8, table.table[3].nick.slice(), "Alice");
 
-    try table.process(40, "Dave", "ZIG", 900, 10);
+    try table.process(40, "Dave", &[_]game.Value{.z,.a,.g}, 900, 10);
     try std.testing.expectEqualSlices(u32,  &[_]u32{900, 500, 150, 100, 75}, table.scores[0..5]);
     try std.testing.expectEqualSlices(u64,  &[_]u64{40, 150, 20, 10, 30}, table.keys[0..5]);
 
@@ -270,7 +270,7 @@ test "Test HighScoreTable" {
     try std.testing.expectEqualSlices(u8, table.table[2].nick.slice(), "Bob");
     try std.testing.expectEqualSlices(u8, table.table[3].nick.slice(), "Alice");
 
-    try table.process(40, "Dave", "zoe", 20, 10);
+    try table.process(40, "Dave", &[_]game.Value{.z,.o,.e}, 20, 10);
     try std.testing.expectEqualSlices(u64,  &[_]u64{40, 150, 20, 10, 30}, table.keys[0..5]);
 
 }
