@@ -8,7 +8,8 @@
             .path = "./deps/zap",
         },
         .aws = .{
-            .path = "./deps/aws-sdk-for-zig",
+            .url = "git+https://github.com/elerch/aws-sdk-for-zig.git#3979d32a1d399e2a8f5d967b392160a3dd099878",
+            .hash = "aws-0.0.1-SbsFcJDcCQBLsXKOoLLMSKGvmlFiosiGArxAbQPCQhKv",
         },
     },
     .paths = .{
