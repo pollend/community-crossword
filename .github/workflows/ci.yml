@@ -23,9 +23,9 @@ jobs:
 
 
     - name: Setup Zig
-      uses: https://github.com/mlugg/setup-zig@v2.0.1
+      uses: mlugg/setup-zig@v2
       with:
-        version: ${ env.ZIG_VERSION }
+        version: 0.14.1
 
     - name: zig test
       run: zig build test
