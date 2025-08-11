@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { get, type Readable } from 'svelte/store';
+  import { get} from 'svelte/store';
   import SidebarContainer from './sidbarConatiner.svelte';
   import { getContext } from 'svelte';
   import ScoreWord from './score_word.svelte';
@@ -24,25 +24,6 @@
   async function submit() {
     submitting = true;
     netSendNick(global.socket!, display);
-
-    //try {
-    //  await fetch(`${import.meta.env.VITE_APP_URL}/refresh`, {
-    //    method: "GET",
-    //  });
-    //  const response = await fetch(`${import.meta.env.VITE_APP_URL}/update_nick`, {
-    //    method: 'POST',
-    //    headers: {
-    //      'Content-Type': 'application/x-www-form-urlencoded',
-    //    },
-    //    body: `nick=${encodeURIComponent(display)}`,
-    //  })
-    //  if (response.ok) {
-    //    const jsn = await response.json();
-    //    profile.nick.set(jsn.nick);
-    //    submitting = false;
-    //  }
-    //} finally {
-    //}
   }
 
 </script>
@@ -99,7 +80,7 @@
     <h3 class="text-lg font-semibold text-gray-900 mb-4">Recent Words Solved</h3>
     {#if $words_solved.length > 0}
       <div class="space-y-3 overflow-y-auto">
-        {#each $words_solved as solve}
+        {#each ($words_solved).reverse() as solve}
           <div class="bg-gray-50 p-3 border-l-4 border-blue-400">
               <div class="flex justify-between items-start mb-2">
                 <ScoreWord input={solve.word}></ScoreWord>
@@ -108,7 +89,7 @@
 
               <div class="flex justify-between items-start mb-2">
                 <div class="text-sm text-gray-700">{solve.clue}</div>
-                <div class="text-xs text-gray-500">{solve.timestamp.toLocaleTimeString()}</div>
+                <div class="text-xs text-gray-500">{new Date(solve.timestamp * 1000).toLocaleTimeString()}</div>
               </div>
           </div>
         {/each}

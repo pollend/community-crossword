@@ -377,7 +377,7 @@ pub const Board = struct {
     }
 
 
-    pub fn write_cache_s3(
+    pub fn commit_s3(
         self: *Board,
         allocator: std.mem.Allocator,
         bucket: []const u8,
@@ -407,9 +407,9 @@ pub const Board = struct {
             std.log.err("Failed to upload backup to S3: {any}", .{err});
             return err;
         };
+
         defer result.deinit();
     }
-
     pub fn write_cache_writer(
         self: *Board,
         writer: std.io.AnyWriter,
@@ -984,7 +984,7 @@ pub fn background_worker() void {
         if(std.time.timestamp() - state.backup_timestamp >= BACKUP_TIME_STAMP) {
             std.log.info("Creating game backup...", .{});
             state.backup_timestamp = std.time.timestamp();
-            state.board.write_cache_s3(
+            state.board.commit_s3(
                 state.gpa,
                 state.bucket,
                 state.map_key,
@@ -1022,10 +1022,6 @@ pub fn background_worker() void {
             }
         }
 
-        //if(std.time.timestamp() - state.generate_map_timestamp >= MAP_GENERATION_TIME) {
-        //    state.generate_map_timestamp = std.time.timestamp();
-        //    //background_write_map();
-        //}
         update_clients() catch |err| {
             std.log.err("Failed to update clients: {any}", .{err});
         };
@@ -1042,7 +1038,7 @@ pub fn background_worker() void {
     ) catch |err| {
         std.log.err("Failed to write global highscores: {any}", .{err});
     };
-    game.state.board.write_cache_s3(
+    game.state.board.commit_s3(
         state.gpa,
         state.bucket,
         state.map_key,
@@ -1072,6 +1068,7 @@ pub const State = struct {
     bucket: []const u8,
     region: []const u8,
     aws_client: aws.Client,
+    origins: std.ArrayList([]const u8),
 
     global: HighscoreTable100,
 

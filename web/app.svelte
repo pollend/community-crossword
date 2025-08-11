@@ -37,7 +37,6 @@
   import { Direction, type Clue, MouseState } from "./types";
   import { DEFAULT_NICKS, GRID_CELL_PX, GRID_SIZE, UNIQUE_STR } from "./constants";
   import 'pixi.js/math-extras';
-  import { ProfileSession } from "./profile";
   import { HighscoreTable } from "./highscoreTable";
     import { Global } from "./state";
 
@@ -47,13 +46,10 @@
     t: number;
   };
 
-  const profileSession = new ProfileSession();
   const globalHighscores = new HighscoreTable("global")
   const global = new Global();
   global.globalHighScore = globalHighscores;
-  global.profile = profileSession;
   setContext("global", global);
-  setContext("profile", profileSession)
   setContext("globalHighscores", globalHighscores);
 
   let frame: HTMLDivElement | undefined = $state.raw(undefined);
@@ -429,9 +425,9 @@
             (boardSize.y * GRID_CELL_PX) * Math.random(),
           );
           netSendNick(socket!, window.localStorage.getItem(`nick-${UNIQUE_STR}`) || DEFAULT_NICKS[Math.floor(Math.random() * DEFAULT_NICKS.length)]);
-          global.initialize(readyPkt.uid);
-          profileSession.score.set(readyPkt.score);
-          profileSession.num_clues.set(readyPkt.num_clues_solved);
+          global.initialize(readyPkt.session_id);
+          global.score.set(readyPkt.score);
+          global.num_clues.set(readyPkt.num_clues_solved);
           syncViewThrottle.trigger();
           break;
         }
@@ -479,9 +475,9 @@
           if(net_solve.owner) {
             const cl = clueSlots.find(c => c && c.pos.x === net_solve.x && c.pos.y === net_solve.y);
             if(net_solve.dir === Direction.Horizontal && cl && cl.hor) {
-              profileSession.push(net_solve.values, cl.hor.text);
+              global.update_clue(net_solve.values, cl.hor.text);
             } else if(net_solve.dir === Direction.Vertical && cl && cl.ver) {
-              profileSession.push(net_solve.values, cl.ver.text);
+              global.update_clue(net_solve.values, cl.ver.text);
             }
           }
           for(let i = 0; i < net_solve.values.length; i++) {

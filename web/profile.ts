@@ -13,53 +13,6 @@ export const enum ProfileVersion {
   v0000 = 1, // Initial version
 }
 
-export function wordValue(c: Value): number {
-  switch (c) {
-    case Value.a:
-    case Value.e:
-    case Value.i:
-    case Value.o:
-    case Value.u:
-    case Value.l:
-    case Value.n:
-    case Value.s:
-    case Value.t:
-    case Value.r:
-      return 1;
-    case Value.d:
-    case Value.g:
-      return 2;
-    case Value.b:
-    case Value.c:
-    case Value.m:
-    case Value.p:
-      return 3;
-    case Value.f:
-    case Value.h:
-    case Value.v:
-    case Value.w:
-    case Value.y:
-      return 4;
-    case Value.k:
-      return 5;
-    case Value.j:
-    case Value.x:
-      return 8;
-    case Value.q:
-    case Value.z:
-      return 10;
-  }
-  return 0;
-}
-
-function calculateScore(word: Value[]): number {
-  let score = 0;
-  for (let i = 0; i < word.length; i++) {
-    score += wordValue(word[i]) || 0;
-  }
-  return score;
-}
-
 export class ProfileSession {
   public nick: Writable<string> = writable("");
   public num_clues: Writable<number> = writable(0);
@@ -76,17 +29,17 @@ export class ProfileSession {
     });
   }
 
-  public push(word: Value[], clue: string) {
-    this.words_solved.update((solves) => {
-      solves.push({
-        timestamp: new Date().getUTCSeconds(),
-        word: word,
-        clue: clue,
-        score: calculateScore(word),
-      });
-      return solves;
-    });
-  }
+  //  public push(word: Value[], clue: string) {
+  //    this.words_solved.update((solves) => {
+  //      solves.push({
+  //        timestamp: new Date().getUTCSeconds(),
+  //        word: word,
+  //        clue: clue,
+  //        score: calculateScore(word),
+  //      });
+  //      return solves;
+  //    });
+  //  }
 
   //public async load(session: string) {
   //  this.words_solved.set([]);

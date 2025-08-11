@@ -198,7 +198,12 @@ pub fn msg_ready(c: *client.Client) !void {
     try writer.writeInt(u32, game.state.board.size[1], .little);
     try writer.writeInt(u32, c.session.num_clues_solved, .little);
     try writer.writeInt(u32, c.session.score, .little);
-    try writer.writeInt(u32, game.state.board.uid, .little);
+
+    var session_hash = std.hash.Adler32.init();
+    session_hash.update(&std.mem.toBytes(c.session.profile_id));
+    session_hash.update(&std.mem.toBytes(game.state.board.uid));
+    try writer.writeInt(u32, session_hash.final(), .little);
+
 
     client.WebsocketHandler.write(c.handle, buffer.items, false) catch |err| {
         std.log.err("Failed to write message: {any}", .{err});

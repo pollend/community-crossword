@@ -32,10 +32,6 @@ pub fn tracked_cursor_order(client_id: u32, a: TrackedCursors) std.math.Order{
     }
 } 
 
-pub fn less_than_cursor(_: void, a: TrackedCursors, b: TrackedCursors) bool {
-    return a.client_id < b.client_id;
-}
-
 pub fn is_cursor_within_view(cell_rect: rect.Rect, pos: @Vector(2, u32)) bool {
     return rect.contains_point(cell_rect, pos / @Vector(2, u32){game.CELL_PIXEL_SIZE, game.CELL_PIXEL_SIZE});
 }
@@ -77,7 +73,7 @@ pub fn upgrade(allocator: std.mem.Allocator, r: zap.Request) !*Client {
 
     const res = try game.state.client_lookup.getOrPut(profile.profile_id);
     if(res.found_existing) {
-        std.log.warn("Client with profile ID {any} already exists, reusing existing client", .{profile.profile_id});
+        std.log.warn("Client with profile ID {any} already exists", .{profile.profile_id});
         return error.ClientAlreadyExists;
     }
     
@@ -172,10 +168,8 @@ fn on_message_websocket(
         switch (msg_id) {
             .update_nick => {
                 c.nick = try reader.readBoundedBytes(NICK_MAX_LENGTH);
-                std.debug.print("updatin nick: {s}\n", .{c.nick.slice()});
-                game.state.global.update_nick(c.session.profile_id, c.nick.slice()) catch |err| {
-                    std.log.err("Failed to update nick: {any}", .{err});
-                };
+                std.debug.print("updating nick: {any} - {s}\n", .{c.client_id, c.nick.slice()});
+                game.state.global.update_nick(c.session.profile_id, c.nick.slice());
                 try net.msg_send_nick(c, c.nick.slice());
             },
             .set_view => {
@@ -257,7 +251,7 @@ fn on_message_websocket(
                             }
                             {
                                 c.session.update_solved(current_clue); 
-                                game.state.global.process(c.session.profile_id, c.nick.slice(), current_clue.clue[0..], c.session.score, c.session.num_clues_solved) catch |err| {
+                                game.state.global.process(c.session.profile_id, c.nick.slice(), current_clue.word[0..], c.session.score, c.session.num_clues_solved) catch |err| {
                                     std.log.err("Failed to process global highscore: {any}", .{err});
                                 };
                                 _ = board.clues_completed.fetchAdd(1, .seq_cst);

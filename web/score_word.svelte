@@ -1,6 +1,5 @@
 <script lang="ts">
-    import { isEmptyValue, Value, valueToChar } from "./net";
-    import { wordValue } from "./profile";
+    import { isEmptyValue, Value, valueToChar, wordValue } from "./net";
     let {input }: {input: Value[]} = $props();
 </script>
                 

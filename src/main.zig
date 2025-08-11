@@ -8,6 +8,7 @@ const aws = @import("aws");
 const evict_fifo = @import("evict_fifo.zig");
 const profile_session = @import("profile_session.zig");
 const nanoid = @import("nanoid.zig");
+const high_score_table = @import("high_score_table.zig");
 
 fn on_upgrade(r: zap.Request, target_protocol: []const u8) !void {
     // make sure we're talking the right protocol
@@ -43,7 +44,17 @@ pub fn on_request(r: zap.Request) !void {
             try r.setHeader("Access-Control-Max-Age", "86400");
             return;
         }
-        try r.setHeader("Access-Control-Allow-Origin", "http://localhost:8080");
+
+        if(r.getHeader("origin")) |origin| {
+            for(game.state.origins.items) |allowed_origin| {
+                if(std.mem.startsWith(u8, origin, allowed_origin)) {
+                    std.log.info("CORS: allowed origin {s}", .{allowed_origin});
+                    try r.setHeader("Access-Control-Allow-Origin", allowed_origin);
+                    break;
+                }
+            }
+        }
+
         try r.setHeader("Access-Control-Allow-Credentials", "true");
         if(std.mem.startsWith(u8, path, "/refresh")) {
             std.log.info("refresh: received request to refresh session cookie", .{});
@@ -59,6 +70,7 @@ pub fn on_request(r: zap.Request) !void {
 
                game.state.client_lock.lock();
                if(game.state.client_lookup.get(session.profile_id)) |server_client| {
+                   game.state.client_lock.unlock();
                    server_client.session.refresh();
                    session = server_client.session;
                } else {
@@ -73,11 +85,12 @@ pub fn on_request(r: zap.Request) !void {
             var cookie = try session.create_cookie(game.state.gpa,game.state.session_key);
             std.log.info("refresh: setting session cookie: {s}: {any}", .{cookie, cookie.len});
             try r.setCookie(.{
-                .name = client.SESSION_COOKIE_ID                     ,
+                .name = client.SESSION_COOKIE_ID,
                 .value = cookie[0..],
                 .http_only = true,
                 .secure = true,
                 .partitioned = true,
+                .same_site = .None,
             });
             
             r.setStatus(.ok);
@@ -85,9 +98,10 @@ pub fn on_request(r: zap.Request) !void {
             if (r.sendBody("OK")) {} else |err| {
                 std.log.err("Unable to send body: {any}", .{err});
             }
-
             return;
         }
+        r.setStatus(.not_found);
+        return;
     }
     try r.setHeader("Cache-Control", "no-cache");
     if (r.sendFile("dist/index.html")) {} else |err| {
@@ -214,11 +228,21 @@ pub fn main() !void {
     } else {
         port = 3010;
     }
+    var origins: std.ArrayList([]const u8) = std.ArrayList([]const u8).init(allocator);
 
     if(try __get_env_var(allocator, "CROSSWORD_LOAD")) |str| {
         crossword_map = str;
     } else {
         crossword_map = "crossword";
+    }
+
+    if(try __get_env_var(allocator, "ALLOW_ORIGINS")) |origins_str| {
+        var parts = std.mem.splitSequence(u8, origins_str, ",");
+        while(parts.next()) |part| {
+            try origins.append(part);
+        }
+    } else {
+        try origins.append("http://localhost:8080");
     }
 
     if(try __get_env_var(allocator, "SESSION_KEY")) |str| {
@@ -280,6 +304,7 @@ pub fn main() !void {
         .session_key = buf,
         .map_key = crossword_map,
         .domain = domain,
+        .origins = origins,
 
         .bucket = bucket,
         .region = region,
@@ -341,4 +366,5 @@ test {
     _ = rect;
     _ = evict_fifo;
     _ = profile_session;
+    _ = high_score_table; 
 }

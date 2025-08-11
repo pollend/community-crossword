@@ -34,117 +34,6 @@ score: u32 = 0,
 profile_id: u64 = 0,
 pub const ProfileSession = @This();
 
-//pub const canned_named = [_][]const u8{
-//    "Brainiac",
-//    "Thinker",
-//    "Minder",
-//    "Logician",
-//    "Lexicon",
-//    "Ponder",
-//    "Cogito",
-//    "Clever",
-//    "Knot",
-//    "Twist",
-//    "Untangle",
-//    "Unwind",
-//    "Unlock",
-//    "Decipher",
-//    "Reveal",
-//    "Uncover",
-//    "Clarity",
-//    "Eureka",
-//    "Witty",
-//    "Sly",
-//    "Puzzler",
-//    "Riddler",
-//    "Jester",
-//    "Fable",
-//    "Quip",
-//    "Jest",
-//    "Gimmick",
-//    "Gag",
-//    "Snafu",
-//    "Hooey",
-//    "Sprocket",
-//    "Widget",
-//    "Gizmo",
-//    "Goblin",
-//    "Pixie",
-//    "Sprite",
-//    "Imp",
-//    "Trickster",
-//    "Joker",
-//    "Jinx",
-//    "Noodle",
-//    "Whiz",
-//    "Ace",
-//    "Sage",
-//    "Mentor",
-//    "Guru",
-//    "Wizard",
-//    "Maestro",
-//    "Magus",
-//    "Archon",
-//    "Savant",
-//    "Virtuoso",
-//    "Luminary",
-//    "Prodigy",
-//    "Genius",
-//    "Polymath",
-//    "Maven",
-//    "Oracle",
-//    "Vision",
-//    "Specter",
-//    "Shadow",
-//    "Whisper",
-//    "Echo",
-//    "Phantom",
-//    "Paradox",
-//    "Nexus",
-//    "Enigma",
-//    "Aperture",
-//    "Conduit",
-//    "Portal",
-//    "Vortex",
-//    "Prism",
-//    "Chroma",
-//    "Cipher",
-//    "Cryptic",
-//    "Rune",
-//    "Glyph",
-//    "Amulet",
-//    "Token",
-//    "Talisman",
-//    "Charm",
-//    "Trinket",
-//    "Key",
-//    "Lock",
-//    "Latch",
-//    "Bolt",
-//    "Hinge",
-//    "Latchkey",
-//    "Pin",
-//    "Nudge",
-//    "Poke",
-//    "Wiggle",
-//    "Fidget",
-//    "Tinker",
-//    "Doodle",
-//    "Scribble",
-//    "Jot",
-//    "Sketch",
-//    "Dabbler",
-//};
-//pub fn random_nick_name() []const u8 {
-//    comptime {
-//        for(canned_named) |name| {
-//            std.debug.assert(name.len < NICK_MAX_LENGTH);
-//        }
-//    }
-//    const index = std.crypto.random.int(u32) % canned_named.len;
-//    return canned_named[index];
-//}
-
 pub fn empty(max_age: u32) ProfileSession {
     return ProfileSession {
         .profile_id =std.crypto.random.int(u64), 
@@ -153,109 +42,7 @@ pub fn empty(max_age: u32) ProfileSession {
         .num_clues_solved = 0,
         .score = 0,
         .max_age = max_age,
-        //.nick = std.BoundedArray(u8, NICK_MAX_LENGTH).init(0) catch unreachable,
     };
-}
-
-pub fn get_nick_name(_: *const ProfileSession) ?[]const u8 {
-    //if (self.nick.len == 0) {
-    //    return null;
-    //}
-    return "";
-}
-
-//pub fn commit_profile_s3(
-//    self: *ProfileSession,
-//    allocator: std.mem.Allocator,
-//    bucket: []const u8,
-//    options: aws.Options
-//) !void {
-//    var buffer = std.ArrayList(u8).init(allocator);
-//    defer buffer.deinit();
-//    var writer = buffer.writer();
-//    self.write_profile(writer.any()) catch |err| {
-//        std.log.err("Failed to write session data: {any}", .{err});
-//        return err;
-//    };
-//
-//    var key_buf: [64]u8 = undefined;
-//    {
-//        const key = try std.fmt.bufPrint(
-//            key_buf[0..],
-//            "profile/{s}.profile",
-//            .{self.profile_id },
-//        );
-//        const result = aws.Request(aws.services.s3.put_object).call(.{
-//            .acl = "public-read",
-//            .bucket = bucket,
-//            .key = key,
-//            .content_type = "application/octet-stream",
-//            .body = buffer.items,
-//            .storage_class = "STANDARD",
-//        }, options) catch |err| {
-//            std.log.err("Failed to upload backup to S3: {any}", .{err});
-//            return err;
-//        };
-//        defer result.deinit();
-//    } 
-//    {
-//        const key = try std.fmt.bufPrint(
-//            key_buf[0..],
-//            "profile/{s}.s",
-//            .{self.session_id },
-//        );
-//        const result = aws.Request(aws.services.s3.put_object).call(.{
-//            .bucket = bucket,
-//            .key = key,
-//            .content_type = "application/octet-stream",
-//            .body = buffer.items,
-//            .storage_class = "STANDARD",
-//        }, options) catch |err| {
-//            std.log.err("Failed to upload backup to S3: {any}", .{err});
-//            return err;
-//        };
-//        defer result.deinit();
-//
-//    }
-//}
-//
-//pub fn load_profile_s3(
-//    allocator: std.mem.Allocator,
-//    profile_id: []const u8,
-//    bucket: []const u8,
-//    options: aws.Options,
-//) !ProfileSession {
-//    if(profile_id.len != SESSION_ID_LENGTH ) {
-//        return error.InvalidSessionID;
-//    }
-//    var key_buf: [64]u8 = undefined;
-//    const key = try std.fmt.bufPrint(
-//        key_buf[0..],
-//        "profile/{s}.profile",
-//        .{ profile_id },
-//    );
-//    
-//    const session_resp = try aws.Request(aws.services.s3.get_object).call(.{
-//        .bucket = bucket,
-//        .key = key
-//    }, options); 
-//    defer session_resp.deinit();
-//    
-//    var stream = std.io.fixedBufferStream(session_resp.response.body orelse "");
-//    var reader = stream.reader();
-//    return try ProfileSession.load(allocator, profile_id, reader.any());
-//}
-
-
-pub fn set_nick_name(
-    _: *ProfileSession,
-    _: []const u8,
-) !void {
-    //if (nick.len > NICK_MAX_LENGTH) {
-    //    return error.NickTooLong;
-    //}
-    //self.nick.len = nick.len;
-    //@memcpy(self.nick.buffer[0..nick.len], nick[0..nick.len]);
 }
 
 pub fn update_solved(
@@ -374,13 +161,6 @@ pub fn load_session(
             session.max_age = try reader.readInt(u32, .little);
             session.created_at = try reader.readInt(i64, .little);
             session.last_refresh = try reader.readInt(i64, .little);
-            //session.nick.len = try reader.readInt(u16, .little);
-            //if (session.nick.len > NICK_MAX_LENGTH) {
-            //    return error.NickTooLong;
-            //}
-            //if(try reader.readAll(session.nick.slice()) != session.nick.len) {
-            //    return error.EndOfStream;
-            //}
             session.num_clues_solved = try reader.readInt(u32, .little);
             session.score = try reader.readInt(u32, .little);
             return session; 
@@ -392,7 +172,7 @@ pub fn load_session(
 
 test "serialize and deserialize" {
     const allocator = std.testing.allocator;
-    var session = try ProfileSession.empty(allocator);
+    var session = ProfileSession.empty(10);
    
     var clue = try game.Clue.init_from_ascii(
         allocator,
@@ -402,32 +182,21 @@ test "serialize and deserialize" {
         .Across
     );
     defer clue.deinit();
-
-    try session.set_nick_name("TestUser");
-    try session.update_solved(&clue);
+    session.update_solved(&clue);
     
     var buffer = std.ArrayList(u8).init(allocator);
     defer buffer.deinit();
     var writer = buffer.writer();
-    try session.write(writer.any());
+    try session.write_session(writer.any());
 
     var stream = std.io.fixedBufferStream(buffer.items);
     var reader = stream.reader();
     
-    var loaded_session = try ProfileSession.load_session(allocator, session.profile_id[0..], reader.any());
-    defer loaded_session.deinit();
+    const loaded_session = try ProfileSession.load_session(reader.any());
 
-    try std.testing.expectEqualSlices(u8, session.profile_id[0..], loaded_session.profile_id[0..]);
-    try std.testing.expectEqual(session.nick_len, loaded_session.nick_len);
-    try std.testing.expectEqualSlices(u8, session.nick[0..session.nick_len], loaded_session.nick[0..loaded_session.nick_len]);
+    try std.testing.expectEqual(session.profile_id, loaded_session.profile_id);
     try std.testing.expectEqual(session.num_clues_solved, loaded_session.num_clues_solved);
     try std.testing.expectEqual(session.score, loaded_session.score);
-    try std.testing.expectEqual(session.words_solved.length(), loaded_session.words_solved.length());
-    try std.testing.expectEqualSlices(
-        game.Value,
-        session.words_solved.last().?.word,
-       clue.word[0..] 
-    );
 }
 
 
