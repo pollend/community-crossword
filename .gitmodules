@@ -1,0 +1,3 @@
+[submodule "deps/zap"]
+	path = deps/zap
+	url = https://github.com/pollend/zap.git

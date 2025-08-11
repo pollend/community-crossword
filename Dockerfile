@@ -1,5 +1,5 @@
 # Multi-stage build for smaller final image
-FROM debian:latest as zig-builder
+FROM debian:stable as zig-builder
 
 # Install dependencies
 RUN apt-get update

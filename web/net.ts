@@ -14,8 +14,54 @@ export const enum MessageID {
   sync_cursors_delete = 5,
   broadcast_game_state = 6,
   update_nick = 7,
-  session_negotiation = 8,
-  solve_clue = 9,
+  solved_clue = 8,
+}
+
+export function wordValue(c: Value): number {
+  switch (c) {
+    case Value.a:
+    case Value.e:
+    case Value.i:
+    case Value.o:
+    case Value.u:
+    case Value.l:
+    case Value.n:
+    case Value.s:
+    case Value.t:
+    case Value.r:
+      return 1;
+    case Value.d:
+    case Value.g:
+      return 2;
+    case Value.b:
+    case Value.c:
+    case Value.m:
+    case Value.p:
+      return 3;
+    case Value.f:
+    case Value.h:
+    case Value.v:
+    case Value.w:
+    case Value.y:
+      return 4;
+    case Value.k:
+      return 5;
+    case Value.j:
+    case Value.x:
+      return 8;
+    case Value.q:
+    case Value.z:
+      return 10;
+  }
+  return 0;
+}
+
+export function calculateScore(word: Value[]): number {
+  let score = 0;
+  for (let i = 0; i < word.length; i++) {
+    score += wordValue(word[i]) || 0;
+  }
+  return score;
 }
 
 export const enum Value {
@@ -325,9 +371,17 @@ export function netParseReady(view: DataView, offset: number) {
   offset += 4;
   const height = view.getUint32(offset, true);
   offset += 4;
+  const num_cluse_solved = view.getUint32(offset, true);
+  offset += 4;
+  const score = view.getUint32(offset, true);
+  offset += 4;
+  const session_id = view.getUint32(offset, true);
   return {
+    num_clues_solved: num_cluse_solved,
+    score: score,
     board_width: width,
     board_height: height,
+    session_id: session_id,
   };
 }
 
@@ -439,19 +493,19 @@ export function netSendNick(ws: WebSocket, nick: string) {
   }
   ws.send(buffer);
 }
-
-export function netSendSessionNegotiation(ws: WebSocket, session: string) {
-  const buffer = new ArrayBuffer(1 + session.length);
-  let offset = 0;
-  const view = new DataView(buffer);
-  view.setUint8(offset, MessageID.session_negotiation);
-  offset += 1;
-  for (const c of session) {
-    view.setUint8(offset, c.charCodeAt(0));
-    offset += 1;
-  }
-  ws.send(buffer);
-}
+//
+//export function netSendSessionNegotiation(ws: WebSocket, session: string) {
+//  const buffer = new ArrayBuffer(1 + session.length);
+//  let offset = 0;
+//  const view = new DataView(buffer);
+//  view.setUint8(offset, MessageID.session_negotiation);
+//  offset += 1;
+//  for (const c of session) {
+//    view.setUint8(offset, c.charCodeAt(0));
+//    offset += 1;
+//  }
+//  ws.send(buffer);
+//}
 
 export function netSendViewRect(
   ws: WebSocket,

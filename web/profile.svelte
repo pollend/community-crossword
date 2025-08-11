@@ -1,24 +1,31 @@
 <script lang="ts">
-  import { get, type Readable } from 'svelte/store';
+  import { get} from 'svelte/store';
   import SidebarContainer from './sidbarConatiner.svelte';
   import { getContext } from 'svelte';
-  import { ProfileSession, wordValue } from './profile';
-  import {  isEmptyValue, valueToChar } from './net';
   import ScoreWord from './score_word.svelte';
-  let { close, updateNick, isOpen, displayStore }: {updateNick: (nick: string) => void,close:() => void, isOpen: boolean, displayStore: Readable<string>} = $props();
+  import { Global } from './state';
+  import { netSendNick } from './net';
+  let { close, isOpen }: {updateNick: (nick: string) => void,close:() => void, isOpen: boolean} = $props();
 
   let display: string = $state('');
+  let submitting: boolean = $state(false);
 
-  function closeHandler() {
-    display = get<string>(displayStore); // reset display to the current store value
-    close();
-  }
-  displayStore.subscribe(value => {
+  const global = getContext('global') as Global;
+  const {nick, num_clues, score, words_solved } = global;
+  nick.subscribe(value => {
+    submitting = false;
     display = value;
   });
+  function closeHandler() {
+    display = get(nick); // reset display to the current store value
+    close();
+  }
 
-  const profile = getContext('profile') as ProfileSession;
-  const { timestamp, nick, num_clues, score, words_solved, last_updated } = profile;
+  async function submit() {
+    submitting = true;
+    netSendNick(global.socket!, display);
+  }
+
 </script>
 <SidebarContainer
   isOpen={isOpen}
@@ -40,21 +47,20 @@
     <!-- Display Name Section -->
       <h3 class="text-lg font-semibold text-gray-900 mb-4">Display Name</h3>
       <div class="flex space-x-2">
-        <input 
-          type="text" 
-          bind:value={display} 
-          class="flex-1 bg-gray-50 border border-gray-300 text-gray-900 text-sm focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5"
-          placeholder="Enter your display name"
-          maxlength="64"
-        >
-        <button 
-          class="px-4 py-2.5 bg-blue-600 hover:bg-gray-400 text-white rounded-lg transition-colors duration-200 flex items-center"
-          onclick={() => updateNick(display)}
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-            <path d="M12.736 3.97a.733.733 0 0 1 1.047 0c.286.289.29.756.01 1.05L7.88 12.01a.733.733 0 0 1-1.065.02L3.217 8.384a.757.757 0 0 1 0-1.06.733.733 0 0 1 1.047 0l3.052 3.093 5.4-6.425z"/>
-          </svg>
-        </button>
+          <input
+            maxlength="62"
+            type="text" 
+            bind:value={display} 
+            class="flex-1 bg-gray-50 border border-gray-300 text-gray-900 text-sm focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5"
+            placeholder="Enter your display name"
+          >
+          <button 
+            class="px-4 py-2.5 bg-blue-600 hover:bg-gray-400 text-white rounded-lg transition-colors duration-200 flex items-center {submitting ? 'opacity-50 cursor-not-allowed !bg-gray-400' : ''}"
+            onclick={() => submit()}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+              <path d="M12.736 3.97a.733.733 0 0 1 1.047 0c.286.289.29.756.01 1.05L7.88 12.01a.733.733 0 0 1-1.065.02L3.217 8.384a.757.757 0 0 1 0-1.06.733.733 0 0 1 1.047 0l3.052 3.093 5.4-6.425z"/>
+            </svg>          </button>
       </div>
 
     <!-- Profile Statistics -->
@@ -74,7 +80,7 @@
     <h3 class="text-lg font-semibold text-gray-900 mb-4">Recent Words Solved</h3>
     {#if $words_solved.length > 0}
       <div class="space-y-3 overflow-y-auto">
-        {#each $words_solved as solve}
+        {#each ($words_solved).reverse() as solve}
           <div class="bg-gray-50 p-3 border-l-4 border-blue-400">
               <div class="flex justify-between items-start mb-2">
                 <ScoreWord input={solve.word}></ScoreWord>
@@ -83,7 +89,7 @@
 
               <div class="flex justify-between items-start mb-2">
                 <div class="text-sm text-gray-700">{solve.clue}</div>
-                <div class="text-xs text-gray-500">{solve.timestamp.toLocaleTimeString()}</div>
+                <div class="text-xs text-gray-500">{new Date(solve.timestamp * 1000).toLocaleTimeString()}</div>
               </div>
           </div>
         {/each}

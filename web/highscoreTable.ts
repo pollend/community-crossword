@@ -11,7 +11,7 @@ export interface HighscoreEntry {
 
 export const enum HighscoreVersion {
   unknown = 0,
-  v0000 = 1, // Initial version
+  v0000 = 2, // Initial version
 }
 
 export class HighscoreTable {
@@ -85,6 +85,8 @@ export class HighscoreTable {
         offset += 4;
         const numWordsSolved = view.getUint32(offset, true);
         offset += 4;
+        offset += 8; // skip user ID
+
         this.entries.update((en) => {
           en.push({
             nick,
