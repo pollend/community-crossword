@@ -3,8 +3,10 @@ const aws = @import("aws");
 const nanoid = @import("./nanoid.zig");
 const evict_fifo = @import("evict_fifo.zig"); 
 const game = @import("game.zig");
-pub const SESSION_MAGIC_NUMBER: u32 = 0x1FA1ABCE;
 const Aegis256 = std.crypto.aead.aegis.Aegis256;
+const zdt = @import("zdt");
+
+pub const SESSION_MAGIC_NUMBER: u32 = 0x1FA1ABCE;
 
 pub const ProfileVersion = enum(u8) {
     unknown = 0,
@@ -27,8 +29,8 @@ pub const Solved = struct {
 };
 
 num_clues_solved: u32 = 0,
-created_at: i64 = 0,
-last_refresh: i64 = 0,
+refresh_offset: u64 = 0,
+last_refresh: std.time.Timer = undefined,
 max_age: u32 = 0,
 score: u32 = 0,
 profile_id: u64 = 0,
@@ -37,8 +39,7 @@ pub const ProfileSession = @This();
 pub fn empty(max_age: u32) ProfileSession {
     return ProfileSession {
         .profile_id =std.crypto.random.int(u64), 
-        .created_at = std.time.timestamp(),
-        .last_refresh = std.time.timestamp(),
+        .last_refresh = std.time.Timer.start() catch unreachable,
         .num_clues_solved = 0,
         .score = 0,
         .max_age = max_age,
@@ -54,12 +55,12 @@ pub fn update_solved(
 }
 
 pub fn refresh(self: *ProfileSession) void {
-    self.last_refresh = std.time.timestamp();
+    self.refresh_offset = 0;
+    self.last_refresh.reset(); 
 }
 
-pub fn is_expired(self: *const ProfileSession) bool {
-    const now = std.time.timestamp();
-    const age = now - self.last_refresh;
+pub fn is_expired(self: *ProfileSession) bool {
+    const age = (self.last_refresh.read() + self.refresh_offset) / std.time.ns_per_s;
     std.debug.print("Profile session age: {d}, max age: {d}\n", .{age, self.max_age});
     if(self.max_age == 0) {
         return false; // no expiration set
@@ -71,7 +72,7 @@ pub fn parse_cookie(
     allocator: std.mem.Allocator,
     key: [Aegis256.key_length]u8,
     cookie: []const u8
-) !ProfileSession{
+) !ProfileSession {
     var iter = std.mem.splitAny(u8, cookie, ".");
     const data_b64 = iter.next() orelse return error.InvalidCookieFormat;
     const signature_b64 = iter.next() orelse return error.InvalidCookieFormat;
@@ -92,34 +93,40 @@ pub fn parse_cookie(
 
     var empty_buf: [0]u8 = undefined;
     try Aegis256.decrypt(deccrypted_buffer, buffer[0..], tag, &empty_buf, nonce, key);
-    var stream = std.io.fixedBufferStream(deccrypted_buffer[0..]);
-    var reader = stream.reader();
-    return try ProfileSession.load_session(reader.any());
+
+    var reader: std.Io.Reader = .fixed(deccrypted_buffer[0..]);
+    //var stream = std.Io.fixedBufferStream(deccrypted_buffer[0..]);
+    //var reader = stream.reader();
+    return try ProfileSession.load_session(&reader);
 }
 
 
 pub fn create_cookie( self: *ProfileSession, allocator: std.mem.Allocator, key: [Aegis256.key_length]u8) ![]u8 {
-    var buffer = std.ArrayList(u8).init(allocator);
-    defer buffer.deinit();
-    const wr = buffer.writer();
-    try self.write_session(wr.any());
-    try buffer.appendNTimes(0,32); // need to pad buffer for Aegis256 encryption
+    //var buffer: std.ArrayList(u8) = .empty; //.init(allocator);
+    //defer buffer.deinit(allocator);
+    var writer: std.Io.Writer.Allocating = .init(allocator);
+    defer writer.deinit();
+    try self.write_session(&writer.writer);
+    for(0..32) |_| {
+        try writer.writer.writeByte(0);
+    }
+    // need to pad buffer for Aegis256 encryption
     
-    var encrpyted_buffer = try allocator.alloc(u8, buffer.items.len);
+    var encrpyted_buffer = try allocator.alloc(u8, writer.written().len);
     defer allocator.free(encrpyted_buffer);
 
     var tag: [Aegis256.tag_length]u8 = undefined;
     var nonce: [Aegis256.nonce_length]u8 = undefined;
     var empty_buf: [0]u8 = undefined;
     std.crypto.random.bytes(nonce[0..]);
-    Aegis256.encrypt(encrpyted_buffer[0..], &tag, buffer.items[0..], &empty_buf, nonce, key);
+    Aegis256.encrypt(encrpyted_buffer[0..], &tag, writer.written(), &empty_buf, nonce, key);
 
     var signature_buffer: [Aegis256.tag_length + Aegis256.nonce_length]u8 = undefined;
     @memcpy(signature_buffer[0..Aegis256.tag_length], &tag);
     @memcpy(signature_buffer[Aegis256.tag_length..], &nonce);
 
     const b64 = std.base64.url_safe.Encoder;
-    var cookie_buffer = try allocator.alloc(u8, b64.calcSize(buffer.items.len) + b64.calcSize(Aegis256.tag_length + Aegis256.nonce_length) + 1); 
+    var cookie_buffer = try allocator.alloc(u8, b64.calcSize(writer.written().len) + b64.calcSize(Aegis256.tag_length + Aegis256.nonce_length) + 1); 
     var offset: usize = 0;
     offset += b64.encode(cookie_buffer[offset..], encrpyted_buffer).len;
     cookie_buffer[offset] = '.';
@@ -133,13 +140,12 @@ pub fn create_cookie( self: *ProfileSession, allocator: std.mem.Allocator, key: 
 
 pub fn write_session(
     self: *ProfileSession,
-    writer: std.io.AnyWriter,
+    writer: *std.Io.Writer,
 ) !void {
     try writer.writeByte(@intFromEnum(ProfileVersion.v0000));
     try writer.writeInt(u64, self.profile_id, .little);
     try writer.writeInt(u32, self.max_age, .little);
-    try writer.writeInt(i64, self.created_at, .little);
-    try writer.writeInt(i64, self.last_refresh, .little); // last modified timestamp
+    try writer.writeInt(u64, self.last_refresh.read() + self.refresh_offset, .little); // last modified timestamp
     try writer.writeInt(u32, self.num_clues_solved, .little);
     try writer.writeInt(u32, self.score, .little);
     std.debug.print("Wrote profile session: {d} with {d} clues solved, score: {d}\n", .{
@@ -151,18 +157,18 @@ pub fn write_session(
 
 
 pub fn load_session(
-    reader: std.io.AnyReader
+    reader: *std.Io.Reader
 ) !ProfileSession {
-    const version: ProfileVersion = try reader.readEnum(ProfileVersion, .little);
+    const version: ProfileVersion = try reader.takeEnum(ProfileVersion, .little);
     switch(version) {
         .v0000 => {
             var session: ProfileSession.ProfileSession = .{};
-            session.profile_id  = try reader.readInt(u64, .little);
-            session.max_age = try reader.readInt(u32, .little);
-            session.created_at = try reader.readInt(i64, .little);
-            session.last_refresh = try reader.readInt(i64, .little);
-            session.num_clues_solved = try reader.readInt(u32, .little);
-            session.score = try reader.readInt(u32, .little);
+            session.profile_id  = try reader.takeInt(u64, .little);
+            session.max_age = try reader.takeInt(u32, .little);
+            session.last_refresh = std.time.Timer.start() catch unreachable;
+            session.refresh_offset = try reader.takeInt(u64, .little);
+            session.num_clues_solved = try reader.takeInt(u32, .little);
+            session.score = try reader.takeInt(u32, .little);
             return session; 
         },
         else => {},

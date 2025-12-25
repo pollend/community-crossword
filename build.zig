@@ -4,36 +4,15 @@ const std = @import("std");
 // declaratively construct a build graph that will be executed by an external
 // runner.
 pub fn build(b: *std.Build) void {
-    // Standard target options allows the person running `zig build` to choose
-    // what target to build for. Here we do not override the defaults, which
-    // means any target is allowed, and the default is native. Other options
-    // for restricting supported target set are available.
     const target = b.standardTargetOptions(.{});
-
-    // Standard optimization options allow the person running `zig build` to select
-    // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall. Here we do not
-    // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
-
-    // This creates a "module", which represents a collection of source files alongside
-    // some compilation options, such as optimization mode and linked system libraries.
-    // Every executable or library we compile will be based on one or more modules.
     const lib_mod = b.createModule(.{
-        // `root_source_file` is the Zig "entry point" of the module. If a module
-        // only contains e.g. external object files, you can make this `null`.
-        // In this case the main source file is merely a path, however, in more
-        // complicated build scripts, this could be a generated file.
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
     });
 
-    // We will also create a module for our other entry point, 'main.zig'.
     const exe_mod = b.createModule(.{
-        // `root_source_file` is the Zig "entry point" of the module. If a module
-        // only contains e.g. external object files, you can make this `null`.
-        // In this case the main source file is merely a path, however, in more
-        // complicated build scripts, this could be a generated file.
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
@@ -47,11 +26,13 @@ pub fn build(b: *std.Build) void {
        .file =  b.path("src/stb_image_write_impl.c"),
        .flags = flags
     });
-
-    // Modules can depend on one another using the `std.Build.Module.addImport` function.
-    // This is what allows Zig source code to use `@import("foo")` where 'foo' is not a
-    // file path. In this case, we set up `exe_mod` to import `lib_mod`.
     exe_mod.addImport("app_lib", lib_mod);
+    
+    const zdt = b.dependency("zdt", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    exe_mod.addImport("zdt", zdt.module("zdt"));
 
     const zap = b.dependency("zap", .{
         .target = target,
@@ -60,11 +41,11 @@ pub fn build(b: *std.Build) void {
     });
     exe_mod.addImport("zap", zap.module("zap"));
     
-    const aws = b.dependency("aws", .{
-        .target = target,
-        .optimize = optimize,
-    });
-    exe_mod.addImport("aws", aws.module("aws"));
+    //const aws = b.dependency("aws", .{
+    //    .target = target,
+    //    .optimize = optimize,
+    //});
+    //exe_mod.addImport("aws", aws.module("aws"));
 
     // Now, we will create a static library based on the module we created above.
     // This creates a `std.Build.Step.Compile`, which is the build step responsible
