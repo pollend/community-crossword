@@ -60,7 +60,7 @@ pub fn on_request(r: zap.Request) !void {
         if (r.getHeader("origin")) |origin| {
             for (game.state.origins.items) |allowed_origin| {
                 if (std.mem.startsWith(u8, origin, allowed_origin)) {
-                    std.log.info("CORS: allowed origin {s}", .{allowed_origin});
+                    std.log.info("CORS: allowed origin {s}", .{origin});
                     try r.setHeader("Access-Control-Allow-Origin", allowed_origin);
                     break;
                 }
@@ -257,6 +257,7 @@ pub fn main() !void {
         var parts = std.mem.splitSequence(u8, origins_str, ",");
         while (parts.next()) |part| {
             try origins.append(allocator, part);
+            std.log.info("CORS: allowed origin {s}", .{part});
         }
     } else {
         try origins.append(allocator, "http://localhost:8080");
