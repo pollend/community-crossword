@@ -1,0 +1,21 @@
+version: '3.8'
+services:
+  # Zig application container
+  zig-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3010:3010"
+    environment:
+      - "PORT=3010"
+      - "THREADS=4"
+      - "CROSSWORD_LOAD=data/crossword.map"
+      - "DOMAIN=${DOMAIN}"
+      - "SESSION_KEY=${SESSION_KEY}"
+      - "ALLOW_ORIGINS=${ALLOW_ORIGINS}"
+    volumes:
+      - /app/community-crossword:/app/data
+    depends_on:
+      - web-dev
+
