@@ -4,7 +4,6 @@ const client = @import("client.zig");
 const WebSockets = zap.WebSockets;
 const game = @import("game.zig");
 const rect = @import("rect.zig");
-const aws = @import("aws");
 const net = @import("net.zig");
 const WebsocketHandler = WebSockets.Handler(client.Client);
 const high_score_table = @import("high_score_table.zig");
@@ -22,14 +21,17 @@ pub const assert = std.debug.assert;
 
 pub const GRID_SIZE: u32 = 16;
 pub const GRID_LEN: u32 = GRID_SIZE * GRID_SIZE;
-pub const BACKUP_TIME_STAMP: i64 =  std.time.s_per_min * 120;
+pub const BACKUP_TIME_STAMP: i64 = std.time.s_per_min * 120;
 pub const UPDATE_HIGH_SCORE_TIME: i64 = std.time.s_per_min * 15;
 pub const MAP_GENERATION_TIME: i64 = std.time.s_per_min * 60;
 pub const SYNC_GAME_STATE_TIME: i64 = std.time.s_per_min * 1;
-pub const INACTIVE_TIMEOUT: i64 = std.time.s_per_min * 5; 
+pub const INACTIVE_TIMEOUT: i64 = std.time.s_per_min * 5;
 pub const CELL_PIXEL_SIZE: u32 = 80;
 
-pub const MAP_MAGIC_NUMBER: u32 = 0x1F9F1E9f; 
+pub const CROSSWORD_CACHE_FILE: []const u8 = "crossword.cache";
+pub const GLOBAL_LEADERBOARD_FILE: []const u8 = "global.cache";
+
+pub const MAP_MAGIC_NUMBER: u32 = 0x1F9F1E9f;
 pub const MAP_CACHE_MAGIC_NUMBER: u32 = 0x1F9F1E9c; // Different magic number for cache
 
 pub const GRID_SZ: @Vector(2, u32) = @Vector(2, u32){ GRID_SIZE, GRID_SIZE };
@@ -65,7 +67,7 @@ pub const Value = enum(u7) {
     z,
 
     pub fn value_to_char(value: Value) u8 {
-        return switch(value) {
+        return switch (value) {
             .empty => ' ',
             .dash => '-',
             .a => 'a',
@@ -94,82 +96,83 @@ pub const Value = enum(u7) {
             .x => 'x',
             .y => 'y',
             .z => 'z',
-            else => {return ' ';}
+            else => {
+                return ' ';
+            },
         };
     }
 
-    pub fn char_to_value(c: u8) Value{
-            return switch (c) {
-                'a', 'A' => Value.a,
-                'b', 'B' => Value.b,
-                'c', 'C' => Value.c,
-                'd', 'D' => Value.d,
-                'e', 'E' => Value.e,
-                'f', 'F' => Value.f,
-                'g', 'G' => Value.g,
-                'h', 'H' => Value.h,
-                'i', 'I' => Value.i,
-                'j', 'J' => Value.j,
-                'k', 'K' => Value.k,
-                'l', 'L' => Value.l,
-                'm', 'M' => Value.m,
-                'n', 'N' => Value.n,
-                'o', 'O' => Value.o,
-                'p', 'P' => Value.p,
-                'q', 'Q' => Value.q,
-                'r', 'R' => Value.r,
-                's', 'S' => Value.s,
-                't', 'T' => Value.t,
-                'u', 'U' => Value.u,
-                'v', 'V' => Value.v,
-                'w', 'W' => Value.w,
-                'x', 'X' => Value.x,
-                'y', 'Y' => Value.y,
-                'z', 'Z' => Value.z,
-                '-', ' ' => Value.dash, // space or dash
-                else => return error.InvalidCharacter, // Invalid character
-            };
+    pub fn char_to_value(c: u8) Value {
+        return switch (c) {
+            'a', 'A' => Value.a,
+            'b', 'B' => Value.b,
+            'c', 'C' => Value.c,
+            'd', 'D' => Value.d,
+            'e', 'E' => Value.e,
+            'f', 'F' => Value.f,
+            'g', 'G' => Value.g,
+            'h', 'H' => Value.h,
+            'i', 'I' => Value.i,
+            'j', 'J' => Value.j,
+            'k', 'K' => Value.k,
+            'l', 'L' => Value.l,
+            'm', 'M' => Value.m,
+            'n', 'N' => Value.n,
+            'o', 'O' => Value.o,
+            'p', 'P' => Value.p,
+            'q', 'Q' => Value.q,
+            'r', 'R' => Value.r,
+            's', 'S' => Value.s,
+            't', 'T' => Value.t,
+            'u', 'U' => Value.u,
+            'v', 'V' => Value.v,
+            'w', 'W' => Value.w,
+            'x', 'X' => Value.x,
+            'y', 'Y' => Value.y,
+            'z', 'Z' => Value.z,
+            '-', ' ' => Value.dash, // space or dash
+            else => return error.InvalidCharacter, // Invalid character
+        };
     }
 
     pub fn calculate_score_u8(word: []const u8) u32 {
         var score: u32 = 0;
-        for(word) |cc| {
-            const value = char_to_value(cc) catch  {
+        for (word) |cc| {
+            const value = char_to_value(cc) catch {
                 continue;
-            }; 
+            };
             if (value == Value.empty or value == Value.black) {
                 continue;
             }
-            score += switch(value) {
+            score += switch (value) {
                 .a, .e, .i, .o, .u, .l, .n, .s, .t, .r => 1,
                 .d, .g => 2,
-                .b, .c, .m, .p =>  3,
+                .b, .c, .m, .p => 3,
                 .f, .h, .v, .w, .y => 4,
-                .k =>  5,
+                .k => 5,
                 .j, .x => 8,
                 .q, .z => 10,
-                else => 0 
+                else => 0,
             };
         }
         return score;
-        
     }
 
     pub fn calculate_score(word: []Value) u32 {
         var score: u32 = 0;
-        for(word) |value| {
+        for (word) |value| {
             if (value == Value.empty or value == Value.black) {
                 continue;
             }
-            score += switch(value) {
+            score += switch (value) {
                 .a, .e, .i, .o, .u, .l, .n, .s, .t, .r => 1,
                 .d, .g => 2,
-                .b, .c, .m, .p =>  3,
+                .b, .c, .m, .p => 3,
                 .f, .h, .v, .w, .y => 4,
-                .k =>  5,
+                .k => 5,
                 .j, .x => 8,
                 .q, .z => 10,
-                else => 0 
+                else => 0,
             };
         }
         return score;
@@ -181,26 +184,26 @@ pub fn to_cell_index(global_cell_pos: @Vector(2, u32)) usize {
     return (local_cell_pos[1] * GRID_SIZE) + local_cell_pos[0];
 }
 
-pub fn to_quad_index(quad_pos: @Vector(2, u32), quad_size: @Vector(2, u32)) ?usize  {
+pub fn to_quad_index(quad_pos: @Vector(2, u32), quad_size: @Vector(2, u32)) ?usize {
     if (quad_pos[0] >= quad_size[0] or quad_pos[1] >= quad_size[1]) {
         return null;
     }
     return (quad_pos[1] * quad_size[0]) + quad_pos[0];
 }
-    
+
 pub fn to_quad_size(board_size: @Vector(2, u32)) @Vector(2, u32) {
     return board_size / @Vector(2, u32){ GRID_SIZE, GRID_SIZE };
 }
 
 pub fn map_to_quad_pos(pos: @Vector(2, u32)) @Vector(2, u32) {
-    return pos / @Vector(2, u32){GRID_SIZE, GRID_SIZE};
+    return pos / @Vector(2, u32){ GRID_SIZE, GRID_SIZE };
 }
 
 pub fn map_to_quad(rec: rect.Rect) rect.Rect {
     const x: u32 = rec.x / GRID_SIZE;
     const y: u32 = rec.y / GRID_SIZE;
     const width: u32 = (std.math.divCeil(u32, rec.x + rec.width, GRID_SIZE) catch 1) - x;
-    const height: u32 = (std.math.divCeil(u32, rec.y + rec.height, GRID_SIZE) catch 1) - y ;
+    const height: u32 = (std.math.divCeil(u32, rec.y + rec.height, GRID_SIZE) catch 1) - y;
     return .{
         .x = x,
         .y = y,
@@ -215,7 +218,7 @@ pub const Cell = packed struct {
 
     pub fn decode(value: u8) Cell {
         return .{
-            .value = @enumFromInt(@as(u8,@intCast(value & 0x7F))),
+            .value = @enumFromInt(@as(u8, @intCast(value & 0x7F))),
             .lock = @intFromBool((value & (1 << 7)) != 0),
         };
     }
@@ -305,6 +308,7 @@ pub const Clue = struct {
 };
 
 pub const Quad = struct {
+    allocator: std.mem.Allocator,
     x: u32,
     y: u32,
     input: [GRID_LEN]Cell,
@@ -319,7 +323,7 @@ pub const Quad = struct {
     pub fn get_crossing_clues(self: *Quad, pos: @Vector(2, u32), clues: *std.ArrayList(*game.Clue)) !void {
         for (self.overlapping_clues.items) |cl| {
             if (cl.to_rect().contains_point(pos)) {
-                try clues.append(cl);
+                try clues.append(self.allocator, cl);
             }
         }
     }
@@ -343,21 +347,22 @@ pub const Quad = struct {
 
     pub fn init(allocator: std.mem.Allocator, x: u32, y: u32) !Quad {
         return .{
+            .allocator = allocator,
             .x = x,
             .y = y,
             .client_lock = .{},
-            .clients = std.ArrayList(*client.Client).init(allocator),
+            .clients = .empty, //std.ArrayList(*client.Client).init(allocator),
             .input = [_]Cell{.{ .value = Value.black, .lock = 0 }} ** GRID_LEN,
             .lock = .{},
-            .overlapping_clues = std.ArrayList(*Clue).init(allocator),
-            .clues = std.ArrayList(*Clue).init(allocator),
+            .overlapping_clues = .empty, //std.ArrayList(*Clue).init(allocator),
+            .clues = .empty, //std.ArrayList(*Clue).init(allocator),
         };
     }
 
     pub fn deinit(self: *Quad) void {
         self.lock.lock();
         defer self.lock.unlock();
-        self.overlapping_clues.deinit();
+        self.overlapping_clues.deinit(self.allocator);
     }
 };
 
@@ -373,47 +378,46 @@ pub const Board = struct {
         for (self.quads) |*quad| {
             quad.deinit();
         }
-        self.clues.deinit();
+        self.clues.deinit(self.allocator);
         self.allocator.free(self.quads);
     }
 
+    //pub fn commit_s3(
+    //    self: *Board,
+    //    allocator: std.mem.Allocator,
+    //    bucket: []const u8,
+    //    key: []const u8,
+    //    options: aws.Options
+    //) !void {
+    //    const load_cache = try std.fmt.allocPrint(allocator, "{s}.cache", .{key});
+    //    defer allocator.free(load_cache);
 
-    pub fn commit_s3(
+    //    var buffer = std.ArrayList(u8).initCapacity(allocator, self.size[0] * self.size[1] * GRID_LEN) catch |err| {
+    //        std.log.err("Failed to create backup buffer: {any}", .{err});
+    //        return err;
+    //    };
+    //    defer buffer.deinit();
+    //    var writer = buffer.writer();
+    //    self.write_cache_writer(writer.any()) catch |err| {
+    //        std.log.err("Failed to write board cache: {any}", .{err});
+    //        return err;
+    //    };
+    //    const result = aws.Request(aws.services.s3.put_object).call(.{
+    //        .bucket = bucket,
+    //        .key = load_cache,
+    //        .content_type = "application/octet-stream",
+    //        .body = buffer.items,
+    //        .storage_class = "STANDARD",
+    //    }, options) catch |err| {
+    //        std.log.err("Failed to upload backup to S3: {any}", .{err});
+    //        return err;
+    //    };
+
+    //    defer result.deinit();
+    //}
+    pub fn encode_cache(
         self: *Board,
-        allocator: std.mem.Allocator,
-        bucket: []const u8,
-        key: []const u8,
-        options: aws.Options
-    ) !void {
-        const load_cache = try std.fmt.allocPrint(allocator, "{s}.cache", .{key});
-        defer allocator.free(load_cache);
-
-        var buffer = std.ArrayList(u8).initCapacity(allocator, self.size[0] * self.size[1] * GRID_LEN) catch |err| {
-            std.log.err("Failed to create backup buffer: {any}", .{err});
-            return err;
-        };
-        defer buffer.deinit();
-        var writer = buffer.writer();
-        self.write_cache_writer(writer.any()) catch |err| {
-            std.log.err("Failed to write board cache: {any}", .{err});
-            return err;
-        };
-        const result = aws.Request(aws.services.s3.put_object).call(.{
-            .bucket = bucket,
-            .key = load_cache,
-            .content_type = "application/octet-stream",
-            .body = buffer.items,
-            .storage_class = "STANDARD",
-        }, options) catch |err| {
-            std.log.err("Failed to upload backup to S3: {any}", .{err});
-            return err;
-        };
-
-        defer result.deinit();
-    }
-    pub fn write_cache_writer(
-        self: *Board,
-        writer: std.io.AnyWriter,
+        writer: *std.Io.Writer,
     ) !void {
         writer.writeInt(u32, MAP_CACHE_MAGIC_NUMBER, .little) catch |e| {
             std.log.err("Failed to write map cache file: {any}", .{e});
@@ -424,30 +428,29 @@ pub const Board = struct {
             std.log.err("Failed to write map file: {any}", .{e});
             return e;
         }; // version byte
-        
+
         writer.writeInt(u32, self.uid, .little) catch |e| {
             std.log.err("Failed to write map file: {any}", .{e});
             return e;
         };
         writer.writeInt(u32, self.size[0], .little) catch |e| {
             std.log.err("Failed to write board size to backup buffer: {any}", .{e});
-            return e;    
+            return e;
         };
         writer.writeInt(u32, self.size[1], .little) catch |e| {
             std.log.err("Failed to write board size to backup buffer: {any}", .{e});
-            return e;    
+            return e;
         };
-        
-        const quad_whole_map = game.map_to_quad(
-            rect.create(0, 0, self.size[0], self.size[1]));
+
+        const quad_whole_map = game.map_to_quad(rect.create(0, 0, self.size[0], self.size[1]));
         var iter = quad_whole_map.iterator();
         self.lock_quads_shared(quad_whole_map);
         defer self.unlock_quads_shared(quad_whole_map);
         const quad_size = to_quad_size(self.size);
         var tmp: [GRID_LEN]u8 = undefined;
         while (iter.next()) |quad_pos| {
-            if(to_quad_index(quad_pos, quad_size)) |idx| {
-                var i: usize = 0; 
+            if (to_quad_index(quad_pos, quad_size)) |idx| {
+                var i: usize = 0;
                 while (i < game.GRID_LEN) : (i += 1) {
                     tmp[i] = state.board.quads[idx].input[i].encode();
                 }
@@ -461,97 +464,94 @@ pub const Board = struct {
         }
     }
 
-    pub fn load_s3(
-        allocator: std.mem.Allocator,
-        bucket: []const u8,
-        key: []const u8,
-        options: aws.Options,
-    ) !Board {
-        const load_map = try std.fmt.allocPrint(allocator, "{s}.map", .{key});
-        defer allocator.free(load_map);
-        const load_cache = try std.fmt.allocPrint(allocator, "{s}.cache", .{key});
-        defer allocator.free(load_cache);
+    //pub fn load_s3(
+    //    allocator: std.mem.Allocator,
+    //    bucket: []const u8,
+    //    key: []const u8,
+    //    options: aws.Options,
+    //) !Board {
+    //    const load_map = try std.fmt.allocPrint(allocator, "{s}.map", .{key});
+    //    defer allocator.free(load_map);
+    //    const load_cache = try std.fmt.allocPrint(allocator, "{s}.cache", .{key});
+    //    defer allocator.free(load_cache);
 
-        const map_resp = try aws.Request(aws.services.s3.get_object).call(.{
-            .bucket = bucket,
-            .key = load_map,
-        }, options);
-        defer map_resp.deinit();
-        var stream = std.io.fixedBufferStream(map_resp.response.body orelse "");
-        var reader = stream.reader();
+    //    const map_resp = try aws.Request(aws.services.s3.get_object).call(.{
+    //        .bucket = bucket,
+    //        .key = load_map,
+    //    }, options);
+    //    defer map_resp.deinit();
+    //    var stream = std.io.fixedBufferStream(map_resp.response.body orelse "");
+    //    var reader = stream.reader();
 
-        const cache_resp = try aws.Request(aws.services.s3.get_object).call(.{
-            .bucket = bucket,
-            .key = load_cache,
-        },options);
-        defer cache_resp.deinit();
-        var cache_stream = std.io.fixedBufferStream(cache_resp.response.body orelse "");
-        var cache_reader = cache_stream.reader();
-        return try game.Board.load(allocator, reader.any(),cache_reader.any());
-    }
+    //    const cache_resp = try aws.Request(aws.services.s3.get_object).call(.{
+    //        .bucket = bucket,
+    //        .key = load_cache,
+    //    },options);
+    //    defer cache_resp.deinit();
+    //    var cache_stream = std.io.fixedBufferStream(cache_resp.response.body orelse "");
+    //    var cache_reader = cache_stream.reader();
+    //    return try game.Board.load(allocator, reader.any(),cache_reader.any());
+    //}
 
-    pub fn load(
-        allocator: std.mem.Allocator,
-        map_reader: std.io.AnyReader,
-        cache_reader : ?std.io.AnyReader
-    ) !Board {
-        const magic = map_reader.readInt(u32, .little) catch |e| {
+    pub fn load(allocator: std.mem.Allocator, map_reader: *std.Io.Reader, cache_reader: ?*std.Io.Reader) !Board {
+        const magic = map_reader.takeInt(u32, .little) catch |e| {
             std.log.err("Failed to read map file: {any}", .{e});
             return e;
         };
 
-        if(magic != MAP_MAGIC_NUMBER) {
-            std.log.err("Invalid map file magic number: expected {x}, got {x}", .{MAP_MAGIC_NUMBER, magic});
+        if (magic != MAP_MAGIC_NUMBER) {
+            std.log.err("Invalid map file magic number: expected {x}, got {x}", .{ MAP_MAGIC_NUMBER, magic });
             return error.InvalidMagicNumber;
         }
 
-        _ = map_reader.readByte() catch |e| {
+        _ = map_reader.takeByte() catch |e| {
             std.log.err("Failed to read map file: {any}", .{e});
             return e;
         };
-        const uid = map_reader.readInt(u32, .little) catch |e| {
-            std.log.err("Failed to read map file: {any}", .{e});
-            return e;
-        };
-
-        const board_width = map_reader.readInt(u32, .little) catch |e| {
-            std.log.err("Failed to read map file: {any}", .{e});
-            return e;
-        };
-        const board_height = map_reader.readInt(u32, .little) catch |e| {
+        const uid = map_reader.takeInt(u32, .little) catch |e| {
             std.log.err("Failed to read map file: {any}", .{e});
             return e;
         };
 
+        const board_width = map_reader.takeInt(u32, .little) catch |e| {
+            std.log.err("Failed to read map file: {any}", .{e});
+            return e;
+        };
+        const board_height = map_reader.takeInt(u32, .little) catch |e| {
+            std.log.err("Failed to read map file: {any}", .{e});
+            return e;
+        };
+            
         if (board_width % GRID_SIZE != 0 or board_height % GRID_SIZE != 0) {
             std.log.err("Width and height must be multiples of {d}", .{GRID_SIZE});
             return error.SizeNotMultipleOfGridSize;
         }
+
         if (board_width == 0 or board_height == 0) {
             std.log.err("Width and height must be greater than 0", .{});
             return error.InvalidSize;
         }
-        var clues = ClueList.init(allocator);
+        var clues: ClueList = .empty; // ClueList.init(allocator);
         {
-            var buffer = std.ArrayList(u8).init(allocator);
-            defer buffer.deinit();
+            var buffer: std.ArrayList(u8) = .empty; //.init(allocator);
+            defer buffer.deinit(allocator);
             while (true) {
                 buffer.clearRetainingCapacity();
-                const x = map_reader.readInt(u32, .little) catch |e| switch (e) {
+                const x = map_reader.takeInt(u32, .little) catch |e| switch (e) {
                     error.EndOfStream => break,
                     else => |err| {
                         std.log.err("Failed to read map file: {any}", .{err});
                         return err;
                     },
                 };
-                const y = map_reader.readInt(u32, .little) catch |e| switch (e) {
+                const y = map_reader.takeInt(u32, .little) catch |e| switch (e) {
                     error.EndOfStream => break,
                     else => |err| {
                         std.log.err("Failed to read map file: {any}", .{err});
                         return err;
                     },
                 };
-                const dir = map_reader.readInt(u8, .little) catch |e| switch (e) {
+                const dir = map_reader.takeInt(u8, .little) catch |e| switch (e) {
                     error.EndOfStream => break,
                     else => |err| {
                         std.log.err("Failed to read map file: {any}", .{err});
@@ -559,30 +559,30 @@ pub const Board = struct {
                     },
                 };
 
-                const word_len = map_reader.readInt(u32, .little) catch |e| switch (e) {
+                const word_len = map_reader.takeInt(u32, .little) catch |e| switch (e) {
                     error.EndOfStream => break,
                     else => |err| {
                         std.log.err("Failed to read map file: {any}", .{err});
                         return err;
                     },
                 };
-                try buffer.resize(word_len);
-                map_reader.readNoEof(buffer.items) catch |e| switch (e) {
+                try buffer.resize(allocator, word_len);
+                map_reader.readSliceAll(buffer.items) catch |e| switch (e) {
                     error.EndOfStream => break,
                     else => |err| {
                         std.log.err("Failed to read map file: {any}", .{err});
                         return err;
                     },
                 };
-                const clue_len = map_reader.readInt(u32, .little) catch |e| switch (e) {
+                const clue_len = map_reader.takeInt(u32, .little) catch |e| switch (e) {
                     error.EndOfStream => break,
                     else => |err| {
                         std.log.err("Failed to read map file: {any}", .{err});
                         return err;
                     },
                 };
-                try buffer.resize(clue_len + word_len);
-                map_reader.readNoEof(buffer.items[word_len..]) catch |e| switch (e) {
+                try buffer.resize(allocator, clue_len + word_len);
+                map_reader.readSliceAll(buffer.items[word_len..]) catch |e| switch (e) {
                     error.EndOfStream => break,
                     else => |err| {
                         std.log.err("Failed to read map file: {any}", .{err});
@@ -591,7 +591,7 @@ pub const Board = struct {
                 };
                 const word_slice = buffer.items[0..word_len];
                 const clue_slice = buffer.items[word_len..];
-                try clues.append(game.Clue.init_from_ascii(
+                try clues.append(allocator, game.Clue.init_from_ascii(
                     allocator,
                     word_slice,
                     clue_slice,
@@ -614,50 +614,49 @@ pub const Board = struct {
         }
         var completed_clues: u32 = 0;
 
-        const quad_size = to_quad_size(@Vector(2, u32){board_width, board_height});
+        const quad_size = to_quad_size(@Vector(2, u32){ board_width, board_height });
         var is_valid_cache = false;
         invalid_cache: {
-            if(cache_reader) |reader| {
-                const cache_magic = reader.readInt(u32, .little) catch |e| {
+            if (cache_reader) |reader| {
+                const cache_magic = reader.takeInt(u32, .little) catch |e| {
                     std.log.err("Failed to read map cache file: {any}", .{e});
                     break :invalid_cache;
                 };
                 if (cache_magic != MAP_CACHE_MAGIC_NUMBER) {
-                    std.log.err("Invalid map cache file magic number: expected {x}, got {x}", .{MAP_CACHE_MAGIC_NUMBER, cache_magic});
+                    std.log.err("Invalid map cache file magic number: expected {x}, got {x}", .{ MAP_CACHE_MAGIC_NUMBER, cache_magic });
                     break :invalid_cache;
                 }
-                _ = reader.readByte() catch |e| {
+                _ = reader.takeByte() catch |e| {
                     std.log.err("Failed to read map cache file: {any}", .{e});
                     break :invalid_cache;
                 };
-                const cache_uid = reader.readInt(u32, .little) catch |e| {
+                const cache_uid = reader.takeInt(u32, .little) catch |e| {
                     std.log.err("Failed to read map cache file: {any}", .{e});
                     break :invalid_cache;
                 };
-                if( cache_uid != uid) {
-                    std.log.err("UID mismatch: expected {d}, got {d}", .{uid, cache_uid});
+                if (cache_uid != uid) {
+                    std.log.err("UID mismatch: expected {d}, got {d}", .{ uid, cache_uid });
                     break :invalid_cache;
                 }
-                const cache_width = reader.readInt(u32, .little) catch |e| {
+                const cache_width = reader.takeInt(u32, .little) catch |e| {
                     std.log.err("Failed to read map cache file: {any}", .{e});
                     break :invalid_cache;
                 };
-                const cache_height = reader.readInt(u32, .little) catch |e| {
+                const cache_height = reader.takeInt(u32, .little) catch |e| {
                     std.log.err("Failed to read map cache file: {any}", .{e});
                     break :invalid_cache;
                 };
                 if (cache_width != board_width or cache_height != board_height) {
-                    std.log.err("Size mismatch: expected {d}x{d}, got {d}x{d}", .{board_width, board_height, cache_width, cache_height});
+                    std.log.err("Size mismatch: expected {d}x{d}, got {d}x{d}", .{ board_width, board_height, cache_width, cache_height });
                     break :invalid_cache;
                 }
-                const quad_whole_map = game.map_to_quad(
-                    rect.create(0, 0, board_width, board_height));
+                const quad_whole_map = game.map_to_quad(rect.create(0, 0, board_width, board_height));
                 var iter = quad_whole_map.iterator();
                 while (iter.next()) |quad_pos| {
-                    if(to_quad_index(quad_pos, quad_size)) |idx| {
-                        var i: usize = 0; 
+                    if (to_quad_index(quad_pos, quad_size)) |idx| {
+                        var i: usize = 0;
                         while (i < game.GRID_LEN) : (i += 1) {
-                            quads[idx].input[i] = Cell.decode(reader.readByte() catch |err| {
+                            quads[idx].input[i] = Cell.decode(reader.takeByte() catch |err| {
                                 std.log.err("Failed to read quad data from backup buffer: {any}", .{err});
                                 return err;
                             });
@@ -669,27 +668,26 @@ pub const Board = struct {
                 is_valid_cache = true;
             }
         }
-        
+
         {
             var clue_idx: u32 = 0;
             for (clues.items) |*clue| {
                 clue.index = clue_idx; // Assign a unique ID to the clue
                 clue_idx += 1;
                 if (to_quad_index(map_to_quad_pos(clue.pos), quad_size)) |idx| {
-                    quads[idx].clues.append(clue) catch |err| {
+                    quads[idx].clues.append(allocator, clue) catch |err| {
                         std.log.err("Failed to append clue to quad: {any}", .{err});
                         return err;
                     };
                 } else {
                     std.log.warn("clue is incomplete trying to get quad: {any}", .{clue.pos});
                 }
-                const cell_pos_dir: @Vector(2, u32) = if(clue.dir == .Across) @Vector(2, u32){1, 0} else @Vector(2, u32){0, 1};
-                const quad_hit = if(clue.dir == .Across) map_to_quad(rect.create(clue.pos[0], clue.pos[1], @as(u32, @intCast(clue.word.len)), 1))
-                    else map_to_quad(rect.create(clue.pos[0], clue.pos[1], 1, @as(u32, @intCast(clue.word.len))));
+                const cell_pos_dir: @Vector(2, u32) = if (clue.dir == .Across) @Vector(2, u32){ 1, 0 } else @Vector(2, u32){ 0, 1 };
+                const quad_hit = if (clue.dir == .Across) map_to_quad(rect.create(clue.pos[0], clue.pos[1], @as(u32, @intCast(clue.word.len)), 1)) else map_to_quad(rect.create(clue.pos[0], clue.pos[1], 1, @as(u32, @intCast(clue.word.len))));
                 var iter = quad_hit.iterator();
                 while (iter.next()) |quad_pos| {
                     if (to_quad_index(quad_pos, quad_size)) |idx| {
-                        quads[idx].overlapping_clues.append(clue) catch |err| {
+                        quads[idx].overlapping_clues.append(allocator, clue) catch |err| {
                             std.log.err("Failed to append clue to quad: {any}", .{err});
                             return err;
                         };
@@ -698,11 +696,11 @@ pub const Board = struct {
                     }
                 }
 
-                if(!is_valid_cache) {
+                if (!is_valid_cache) {
                     for (clue.word, 0..) |_, index| {
-                        const pos = clue.pos + (cell_pos_dir * @Vector(2,u32){@intCast(index), @intCast(index)});
-                        if(to_quad_index(map_to_quad_pos(pos), quad_size)) |quad_idx| {
-                            quads[quad_idx].input[to_cell_index(pos)].value = Value.empty;  
+                        const pos = clue.pos + (cell_pos_dir * @Vector(2, u32){ @intCast(index), @intCast(index) });
+                        if (to_quad_index(map_to_quad_pos(pos), quad_size)) |quad_idx| {
+                            quads[quad_idx].input[to_cell_index(pos)].value = Value.empty;
                         } else {
                             std.log.err("Failed to set value for clue at position {any}", .{pos});
                         }
@@ -710,20 +708,20 @@ pub const Board = struct {
                 } else {
                     var is_complete = true;
                     for (clue.word, 0..) |_, index| {
-                        const pos = clue.pos + (cell_pos_dir * @Vector(2,u32){@intCast(index), @intCast(index)});
-                        if(to_quad_index(map_to_quad_pos(pos), quad_size)) |quad_idx| {
-                           if(quads[quad_idx].input[to_cell_index(pos)].value != clue.word[index]) {
-                                is_complete = false;    
-                           }
+                        const pos = clue.pos + (cell_pos_dir * @Vector(2, u32){ @intCast(index), @intCast(index) });
+                        if (to_quad_index(map_to_quad_pos(pos), quad_size)) |quad_idx| {
+                            if (quads[quad_idx].input[to_cell_index(pos)].value != clue.word[index]) {
+                                is_complete = false;
+                            }
                         }
                     }
-                    if(is_complete) {
+                    if (is_complete) {
                         completed_clues += 1;
                     }
                 }
             }
         }
-       
+
         return .{
             .allocator = allocator,
             .uid = uid,
@@ -734,48 +732,37 @@ pub const Board = struct {
         };
     }
 
-    pub fn unlock_quads_shared(
-        self: *Board,
-        quad_rect: rect.Rect) void {
+    pub fn unlock_quads_shared(self: *Board, quad_rect: rect.Rect) void {
         var iter = quad_rect.iterator();
         while (iter.next()) |pos| {
-            if(game.to_quad_index(pos, game.to_quad_size(self.size))) |idx| {
+            if (game.to_quad_index(pos, game.to_quad_size(self.size))) |idx| {
                 self.quads[idx].lock.unlockShared();
             }
         }
     }
 
-    pub fn lock_quads_shared(
-        self: *Board,
-        quad_rect: rect.Rect) void {
+    pub fn lock_quads_shared(self: *Board, quad_rect: rect.Rect) void {
         var iter = quad_rect.iterator();
         while (iter.next()) |pos| {
-            if(game.to_quad_index(pos, game.to_quad_size(self.size))) |idx| {
+            if (game.to_quad_index(pos, game.to_quad_size(self.size))) |idx| {
                 self.quads[idx].lock.lockShared();
             }
         }
-
     }
 
-    pub fn lock_quads_client_shared(
-        self: *Board,
-        quad_rect: rect.Rect
-    ) void {
+    pub fn lock_quads_client_shared(self: *Board, quad_rect: rect.Rect) void {
         var iter = quad_rect.iterator();
         while (iter.next()) |pos| {
-            if(game.to_quad_index(pos, game.to_quad_size(self.size))) |idx| {
+            if (game.to_quad_index(pos, game.to_quad_size(self.size))) |idx| {
                 self.quads[idx].client_lock.lockShared();
             }
         }
     }
 
-    pub fn unlock_quads_client_shared(
-        self: *Board,
-        quad_rect: rect.Rect
-    ) void {
+    pub fn unlock_quads_client_shared(self: *Board, quad_rect: rect.Rect) void {
         var iter = quad_rect.iterator();
         while (iter.next()) |pos| {
-            if(game.to_quad_index(pos, game.to_quad_size(self.size))) |idx| {
+            if (game.to_quad_index(pos, game.to_quad_size(self.size))) |idx| {
                 self.quads[idx].client_lock.unlockShared();
             }
         }
@@ -784,7 +771,7 @@ pub const Board = struct {
     pub fn lock_quads(self: *Board, quad_rect: rect.Rect) void {
         var iter = quad_rect.iterator();
         while (iter.next()) |pos| {
-            if(game.to_quad_index(pos, game.to_quad_size(self.size))) |idx| {
+            if (game.to_quad_index(pos, game.to_quad_size(self.size))) |idx| {
                 self.quads[idx].lock.lock();
             }
         }
@@ -793,7 +780,7 @@ pub const Board = struct {
     pub fn unlock_quads(self: *Board, quad_rect: rect.Rect) void {
         var iter = quad_rect.iterator();
         while (iter.next()) |pos| {
-            if(game.to_quad_index(pos, game.to_quad_size(self.size))) |idx| {
+            if (game.to_quad_index(pos, game.to_quad_size(self.size))) |idx| {
                 self.quads[idx].lock.unlock();
             }
         }
@@ -818,7 +805,7 @@ pub const Board = struct {
             while (iter.next()) |quad_pos| {
                 if (new_quad_rect.contains_point(quad_pos))
                     continue;
-                if(to_quad_index(quad_pos, to_quad_size(self.size))) |idx| {
+                if (to_quad_index(quad_pos, to_quad_size(self.size))) |idx| {
                     self.quads[idx].client_lock.lock();
                     defer self.quads[idx].client_lock.unlock();
                     for (self.quads[idx].clients.items, 0..) |cl, index| {
@@ -835,10 +822,10 @@ pub const Board = struct {
             while (iter.next()) |quad_pos| {
                 if (old_quad_rect.contains_point(quad_pos))
                     continue;
-                if(to_quad_index(quad_pos, to_quad_size(self.size))) |idx| {
+                if (to_quad_index(quad_pos, to_quad_size(self.size))) |idx| {
                     self.quads[idx].client_lock.lock();
                     defer self.quads[idx].client_lock.unlock();
-                    self.quads[idx].clients.append(c) catch |err| {
+                    self.quads[idx].clients.append(self.allocator, c) catch |err| {
                         std.log.err("Failed to append client to quad: {any}", .{err});
                         unregister_client_board(self, c, new_quad_rect);
                         return;
@@ -855,7 +842,7 @@ pub const Board = struct {
     ) void {
         var iter = remove_quad_rect.iterator();
         while (iter.next()) |quad_pos| {
-            if(to_quad_index(quad_pos, to_quad_size(self.size))) |idx| {
+            if (to_quad_index(quad_pos, to_quad_size(self.size))) |idx| {
                 self.quads[idx].client_lock.lock();
                 defer self.quads[idx].client_lock.unlock();
                 for (self.quads[idx].clients.items, 0..) |cl, client_index| {
@@ -875,17 +862,17 @@ fn background_write_map() void {
         return;
     };
     defer state.gpa.free(img_buf);
-    for(state.board.quads) |*quad| {
+    for (state.board.quads) |*quad| {
         quad.lock.lockShared();
         defer quad.lock.unlockShared();
 
-        const pos = @Vector(2, u32){quad.x, quad.y} * @Vector(2, u32){GRID_SIZE, GRID_SIZE};
+        const pos = @Vector(2, u32){ quad.x, quad.y } * @Vector(2, u32){ GRID_SIZE, GRID_SIZE };
         for (quad.input, 0..) |cell, cell_index| {
-            const offset_pos = @Vector(2, u32){@as(u32,@intCast(cell_index)) % GRID_SIZE, @as(u32,@intCast(cell_index)) / GRID_SIZE}; 
+            const offset_pos = @Vector(2, u32){ @as(u32, @intCast(cell_index)) % GRID_SIZE, @as(u32, @intCast(cell_index)) / GRID_SIZE };
             const cell_pos = pos + offset_pos;
             const pix_start = (cell_pos[1] * state.board.size[0] + cell_pos[0]) * 4;
-            var pix_color = img_buf[pix_start..pix_start + 4];
-            if(cell.lock == 1) {
+            var pix_color = img_buf[pix_start .. pix_start + 4];
+            if (cell.lock == 1) {
                 pix_color[0] = 0;
                 pix_color[1] = 155;
                 pix_color[2] = 0;
@@ -905,30 +892,20 @@ fn background_write_map() void {
             }
         }
     }
-    if(stb_writer.stbi_write_png(
-        "dist/map.png",
-        @intCast(state.board.size[0]),
-        @intCast(state.board.size[1]),
-        4,
-        img_buf.ptr,
-        @intCast(4 * state.board.size[0])
-    ) <= 0) {
+    if (stb_writer.stbi_write_png("dist/map.png", @intCast(state.board.size[0]), @intCast(state.board.size[1]), 4, img_buf.ptr, @intCast(4 * state.board.size[0])) <= 0) {
         std.log.err("Failed to save map image", .{});
     }
-
 }
-
 
 pub fn update_clients() !void {
     state.client_lock.lock();
     defer state.client_lock.unlock();
-    var disconnect_clients = std.ArrayList(*client.Client).init(state.gpa);
-    defer disconnect_clients.deinit();
-    
-    var visible_cursors = std.ArrayList(client.TrackedCursors).init(state.gpa);
-    defer visible_cursors.deinit();
+    var disconnect_clients: std.ArrayList(*client.Client) = .empty; //.init(state.gpa);
+    defer disconnect_clients.deinit(state.gpa);
 
-    const now = std.time.timestamp();
+    var visible_cursors: std.ArrayList(client.TrackedCursors) = .empty; //.init(state.gpa);
+    defer visible_cursors.deinit(state.gpa);
+
     const quad_size = game.to_quad_size(state.board.size);
     var value_iter = state.client_lookup.valueIterator();
     while (value_iter.next()) |ptr_client| {
@@ -936,26 +913,26 @@ pub fn update_clients() !void {
         cur_client.lock.lock();
         defer cur_client.lock.unlock();
         visible_cursors.clearRetainingCapacity();
-        if(now - cur_client.active_timestamp >= INACTIVE_TIMEOUT) {
-            try disconnect_clients.append(cur_client); 
+        if ((cur_client.active_timestamp.read() / std.time.ns_per_s) >= INACTIVE_TIMEOUT) {
+            try disconnect_clients.append(state.gpa, cur_client);
             continue;
         }
         {
             var client_quad_iter = cur_client.quad_rect.iterator();
-            while(client_quad_iter.next()) |pos| {
+            while (client_quad_iter.next()) |pos| {
                 if (game.to_quad_index(pos, quad_size)) |idx| {
                     const quad = &state.board.quads[idx];
                     quad.client_lock.lockShared();
                     defer quad.client_lock.unlockShared();
-                    next: for(quad.clients.items) |quad_client| {
-                        if(quad_client.client_id == cur_client.client_id) continue;
-                        if(client.is_cursor_within_view(cur_client.cell_rect.pad(5), quad_client.cursor_pos)) {
-                            for(visible_cursors.items) |existing_cursor| {
-                                if(existing_cursor.client_id == quad_client.client_id) {
+                    next: for (quad.clients.items) |quad_client| {
+                        if (quad_client.client_id == cur_client.client_id) continue;
+                        if (client.is_cursor_within_view(cur_client.cell_rect.pad(5), quad_client.cursor_pos)) {
+                            for (visible_cursors.items) |existing_cursor| {
+                                if (existing_cursor.client_id == quad_client.client_id) {
                                     continue :next;
                                 }
                             }
-                            try visible_cursors.append(.{
+                            try visible_cursors.append(state.gpa, .{
                                 .client_id = quad_client.client_id,
                                 .pos = quad_client.cursor_pos,
                             });
@@ -964,56 +941,57 @@ pub fn update_clients() !void {
                 }
             }
             net.msg_sync_cursors(cur_client, cur_client.tracked_cursors_pos.items, visible_cursors.items) catch |err| {
-                std.log.err("Failed to sync cursors for client {d}: {any}", .{cur_client.client_id, err});
+                std.log.err("Failed to sync cursors for client {d}: {any}", .{ cur_client.client_id, err });
                 continue;
             };
             cur_client.tracked_cursors_pos.clearRetainingCapacity();
-            cur_client.tracked_cursors_pos.appendSlice(visible_cursors.items) catch |err| {
-                std.log.err("Failed to append cursors for client {d}: {any}", .{cur_client.client_id, err});
+            cur_client.tracked_cursors_pos.appendSlice(state.gpa, visible_cursors.items) catch |err| {
+                std.log.err("Failed to append cursors for client {d}: {any}", .{ cur_client.client_id, err });
                 continue;
             };
         }
     }
 
-    for(disconnect_clients.items) |c| {
+    for (disconnect_clients.items) |c| {
         client.WebsocketHandler.close(c.handle);
     }
 }
 
 pub fn background_worker() void {
-    while(state.running.load(.monotonic)) {
-        if(std.time.timestamp() - state.update_highscore_timestamp >= UPDATE_HIGH_SCORE_TIME) {
-            std.log.info("Updating Highscores...", .{});
-            state.update_highscore_timestamp = std.time.timestamp();
-            state.global.commit_s3(
-                "global",
-                state.gpa,
-                state.bucket,
-                .{
-                    .region = state.region,
-                    .client = state.aws_client,
-                },
-            ) catch |err| {
-                std.log.err("Failed to write global highscores: {any}", .{err});
-            };
-        }
-        if(std.time.timestamp() - state.backup_timestamp >= BACKUP_TIME_STAMP) {
-            std.log.info("Creating game backup...", .{});
-            state.backup_timestamp = std.time.timestamp();
-            state.board.commit_s3(
-                state.gpa,
-                state.bucket,
-                state.map_key,
-                .{
-                    .region = state.region,
-                    .client = state.aws_client,
-                },
-            ) catch |err| {
-                std.log.err("Failed to write board cache to S3: {any}", .{err});
-            };
-        }
-        if(std.time.timestamp() - state.sync_game_state_timestamp >= SYNC_GAME_STATE_TIME) {
-            state.sync_game_state_timestamp = std.time.timestamp();
+    while (state.running.load(.monotonic)) {
+        //if (std.time.timestamp() - state.update_highscore_timestamp >= UPDATE_HIGH_SCORE_TIME) {
+        //    std.log.info("Updating Highscores...", .{});
+        //    state.update_highscore_timestamp = std.time.timestamp();
+        //    state.global.commit_s3(
+        //        "global",
+        //        state.gpa,
+        //        state.bucket,
+        //        .{
+        //            .region = state.region,
+        //            .client = state.aws_client,
+        //        },
+        //    ) catch |err| {
+        //        std.log.err("Failed to write global highscores: {any}", .{err});
+        //    };
+        //}
+        //if (std.time.timestamp() - state.backup_timestamp >= BACKUP_TIME_STAMP) {
+        //    std.log.info("Creating game backup...", .{});
+        //    state.backup_timestamp = std.time.timestamp();
+        //    state.board.commit_s3(
+        //        state.gpa,
+        //        state.bucket,
+        //        state.map_key,
+        //        .{
+        //            .region = state.region,
+        //            .client = state.aws_client,
+        //        },
+        //    ) catch |err| {
+        //        std.log.err("Failed to write board cache to S3: {any}", .{err});
+        //    };
+        //}
+        //
+        if ((state.generate_map_timer.read() / std.time.ns_per_s) >= SYNC_GAME_STATE_TIME) {
+            state.generate_map_timer.reset();
             state.client_lock.lock();
             defer state.client_lock.unlock();
             var value_iter = state.client_lookup.valueIterator();
@@ -1021,7 +999,7 @@ pub fn background_worker() void {
                 cur_client.*.lock.lock();
                 defer cur_client.*.lock.unlock();
                 net.msg_broadcast_game_state(cur_client.*, &state.board) catch |err| {
-                    std.log.err("Failed to sync game state for client {d}: {any}", .{cur_client.*.client_id, err});
+                    std.log.err("Failed to sync game state for client {d}: {any}", .{ cur_client.*.client_id, err });
                 };
             }
         }
@@ -1029,30 +1007,61 @@ pub fn background_worker() void {
         update_clients() catch |err| {
             std.log.err("Failed to update clients: {any}", .{err});
         };
-        std.time.sleep(std.time.ns_per_ms * 200);
+        std.Thread.sleep(200 * std.time.ns_per_ms);
     }
-    game.state.global.commit_s3(
-        "global",
-        state.gpa,
-        state.bucket,
-        .{
-            .region = state.region,
-            .client = state.aws_client,
-        },
-    ) catch |err| {
-        std.log.err("Failed to write global highscores: {any}", .{err});
-    };
-    game.state.board.commit_s3(
-        state.gpa,
-        state.bucket,
-        state.map_key,
-        .{
-            .region = state.region,
-            .client = state.aws_client,
-        },
-    ) catch |err| {
-        std.log.err("Failed to write board cache to S3: {any}", .{err});
-    };
+
+    leaderboard: {
+        const leaderboard_fs_path = std.fs.path.join(state.gpa, &.{state.data_dir, GLOBAL_LEADERBOARD_FILE}) catch |err| {
+            std.log.err("Failed to create leaderboard file path: {any}", .{err});
+            break :leaderboard;
+        };
+        defer state.gpa.free(leaderboard_fs_path);
+        var file = std.fs.cwd().createFile(leaderboard_fs_path, .{ .truncate = true }) catch |err| {
+            std.log.err("Failed to open leaderboard file for writing: {any}", .{err});
+            break :leaderboard;
+        };
+        defer file.close();
+        var buffer: [4096]u8 = undefined;
+        var writer = file.writer(&buffer);
+        defer writer.end() catch |err| {
+            std.log.err("Failed to finalize leaderboard file: {any}", .{err});
+        };
+        state.global.encode(&writer.interface) catch |err| {
+            std.log.err("Failed to write leaderboard file: {any}", .{err});
+        };
+    }
+    map_cache: {
+        const mcache_cache_fs_path = std.fs.path.join(state.gpa, &.{state.data_dir, CROSSWORD_CACHE_FILE}) catch |err| {
+            std.log.err("Failed to create map cache file path: {any}", .{err});
+            break :map_cache;
+        };
+        defer state.gpa.free(mcache_cache_fs_path);
+        var file = std.fs.cwd().createFile(mcache_cache_fs_path, .{ .truncate = true }) catch |err| {
+            std.log.err("Failed to open map cache file for writing: {any}", .{err});
+            break :map_cache;
+        };
+        defer file.close();
+        var buffer: [4096]u8 = undefined;
+        var writer = file.writer(&buffer);
+        defer writer.end() catch |err| {
+            std.log.err("Failed to finalize map cache file: {any}", .{err});
+        };
+        state.board.encode_cache(&writer.interface) catch |err| {
+            std.log.err("Failed to write map cache file: {any}", .{err});
+        };
+    }
+
+    //game.state.board.commit_s3(
+    //    state.gpa,
+    //    state.bucket,
+    //    state.map_key,
+    //    .{
+    //        .region = state.region,
+    //        .client = state.aws_client,
+    //    },
+    //) catch |err| {
+    //    std.log.err("Failed to write board cache to S3: {any}", .{err});
+    //};
 }
 
 pub const State = struct {
@@ -1060,19 +1069,15 @@ pub const State = struct {
     client_lock: std.Thread.Mutex.Recursive,
     client_lookup: ClientLookupMap,
 
-    backup_timestamp: i64,
-    update_highscore_timestamp: i64 = 0,
-    generate_map_timestamp: i64,
-    sync_game_state_timestamp: i64,
+    generate_map_timer: std.time.Timer,
+    sync_game_timer: std.time.Timer,
     running: std.atomic.Value(bool),
 
     session_key: [profile_session.KEY_LENGTH]u8,
     map_key: []const u8,
+    data_dir: []const u8,
     domain: []const u8,
 
-    bucket: []const u8,
-    region: []const u8,
-    aws_client: aws.Client,
     origins: std.ArrayList([]const u8),
 
     global: HighscoreTable100,

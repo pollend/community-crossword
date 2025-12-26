@@ -23,7 +23,7 @@ export class HighscoreTable {
   public async refresh() {
     try {
       const response = await fetch(
-        `${import.meta.env.VITE_APP_S3}/${this.base}.highscore`,
+        `${import.meta.env.VITE_APP_URL}/${this.base}.highscore`,
       );
 
       if (!response.ok) {

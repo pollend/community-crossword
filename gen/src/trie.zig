@@ -93,7 +93,7 @@ pub fn init(allocator: std.mem.Allocator) !Trie{
             .clue_index = null,
             .index = null, // No index for the root node
         },
-        .clues = CluesArrayList.init(allocator),  
+        .clues = .empty,  
         .allocator = allocator,
     };
 }

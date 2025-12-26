@@ -10,8 +10,7 @@ RUN apt-get install -y \
 
 
 # Install Zig
-ARG ZIG_VERSION=0.14.0
-RUN curl -L https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz -o zig.tar.xz && \
+RUN curl -L https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz -o zig.tar.xz && \
     tar -xf zig.tar.xz && \
     mv zig-linux-x86_64-${ZIG_VERSION} /usr/local/zig && \
     ln -s /usr/local/zig/zig /usr/local/bin/zig
@@ -23,7 +22,7 @@ WORKDIR /app
 COPY . .
 
 RUN npm install
-RUN VITE_APP_URL='https://community-crossword.com' VITE_APP_S3='https://crossword.sfo3.digitaloceanspaces.com' VITE_WS_URL='wss://community-crossword.com' npm run build
+RUN VITE_APP_URL='https://community-crossword.com'  VITE_WS_URL='wss://community-crossword.com' npm run build
 
 # Build the application
 RUN zig build --release=safe -Dtarget=x86_64-linux 
