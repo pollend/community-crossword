@@ -2,32 +2,20 @@ name: CI
 
 on:
   push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
+    branches: [main]
 
 env:
   ZIG_VERSION: 0.15.2
   NODE_VERSION: 18
 
 jobs:
-  publish:
-    name: Build Web Frontend
+  deploy:
+    name: deploy 
     runs-on: ubuntu-latest
     
     steps:
     - name: Checkout
       uses: actions/checkout@v4
-      with:
-        submodules: 'true'
-
-    - name: Setup Zig
-      uses: mlugg/setup-zig@v2
-      with:
-        version: 0.15.2
-
-    - name: zig test
-      run: zig build test
 
     - name: Setup Node.js
       uses: actions/setup-node@v4
@@ -39,7 +27,6 @@ jobs:
       run: npm ci
 
     - name: deploy-server 
-      if: github.ref == 'refs/heads/main'
       uses: appleboy/ssh-action@v1
       env:
         GIT_HASH: ${{ github.sha }}
@@ -59,11 +46,10 @@ jobs:
       run: VITE_WS_URL='wss://community-crossword.com' VITE_APP_URL='https://community-crossword.com'  VITE_APP_S3='https://crossword.sfo3.digitaloceanspaces.com' npm run build
 
     - name: Upload to Itch.io
-      if: github.ref == 'refs/heads/main'
       env:
         BUTLER_API_KEY: ${{ secrets.BUTLER_API_KEY }}
       run: |
-        curl -L -o butler.zip https://broth.itch.ovh/butler/linux-amd64/LATEST/archive/default
+        curl -L -o butler.zip https://broth.itch.zone/butler/linux-amd64/15.24.0/archive/default
         unzip butler.zip
         chmod +x butler
         ./butler -V
