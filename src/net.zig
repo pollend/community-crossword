@@ -5,21 +5,11 @@ const game = @import("game.zig");
 const rect = @import("rect.zig");
 const profile_session = @import("profile_session.zig");
 const zap = @import("zap");
+const z = @cImport({
+    @cInclude("zlib.h");
+});
 
-
-pub const MsgID = enum(u8) { 
-    ready = 0, 
-    set_view = 1, 
-    sync_block = 2, 
-    input_or_sync_cell = 3,
-    sync_cursors = 4,
-    sync_cursors_delete = 5,
-    broadcast_game_state = 6,
-    update_nick = 7,
-    solved_clue = 8,
-    unknown 
-};
-
+pub const MsgID = enum(u8) { ready = 0, set_view = 1, sync_block = 2, input_or_sync_cell = 3, sync_cursors = 4, sync_cursors_delete = 5, broadcast_game_state = 6, update_nick = 7, solved_clue = 8, unknown };
 
 pub const MsgInput = struct {
     pos: @Vector(2, u32),
@@ -27,47 +17,45 @@ pub const MsgInput = struct {
 };
 
 pub fn msg_broadcast_game_state(c: *client.Client, board: *game.Board) !void {
-    var buffer = std.ArrayList(u8).init(c.allocator);
-    defer buffer.deinit();
-    var writer = buffer.writer();
-    try writer.writeByte(@intFromEnum(MsgID.broadcast_game_state));
-    try writer.writeInt(u32, @bitCast(@as(f32, @floatFromInt(board.clues_completed.load(.unordered))) / @as(f32, @floatFromInt(board.clues.items.len))), .little);
-    client.WebsocketHandler.write(c.handle, buffer.items, false) catch |err| {
+    var writer = std.Io.Writer.Allocating.init(c.allocator);
+    defer writer.deinit();
+    try writer.writer.writeByte(@intFromEnum(MsgID.broadcast_game_state));
+    try writer.writer.writeInt(u32, @bitCast(@as(f32, @floatFromInt(board.clues_completed.load(.unordered))) / @as(f32, @floatFromInt(board.clues.items.len))), .little);
+    client.WebsocketHandler.write(c.handle, writer.written(), false) catch |err| {
         std.log.err("Failed to write message: {any}", .{err});
         return err;
     };
 }
 
 pub fn msg_sync_solved_clue(c: *client.Client, clue: *game.Clue, owner: bool) !void {
-    var buffer = std.ArrayList(u8).init(c.allocator);
-    defer buffer.deinit();
-    var writer = buffer.writer();
-    try writer.writeByte(@intFromEnum(MsgID.solved_clue));
+    var writer = std.Io.Writer.Allocating.init(c.allocator);
+    defer writer.deinit();
+
+    try writer.writer.writeByte(@intFromEnum(MsgID.solved_clue));
     var flags: u8 = @intFromEnum(clue.dir);
-    if(owner) {
+    if (owner) {
         flags |= 0x8; // Set the owner bit
     }
-    try writer.writeInt(u8, flags, .little);
-    try writer.writeInt(u32, clue.pos[0], .little);
-    try writer.writeInt(u32, clue.pos[1], .little);
-    for(clue.word) |w| {
-        try writer.writeInt(u8, @intFromEnum(w), .little);
+    try writer.writer.writeInt(u8, flags, .little);
+    try writer.writer.writeInt(u32, clue.pos[0], .little);
+    try writer.writer.writeInt(u32, clue.pos[1], .little);
+    for (clue.word) |w| {
+        try writer.writer.writeInt(u8, @intFromEnum(w), .little);
     }
-    client.WebsocketHandler.write(c.handle, buffer.items, false) catch |err| {
+    client.WebsocketHandler.write(c.handle, writer.written(), false) catch |err| {
         std.log.err("Failed to write message: {any}", .{err});
         return err;
     };
 }
 
 pub fn msg_sync_cell(c: *client.Client, pos: @Vector(2, u32), value: game.Cell) !void {
-    var buffer = std.ArrayList(u8).init(c.allocator);
-    defer buffer.deinit();
-    var writer = buffer.writer();
-    try writer.writeByte(@intFromEnum(MsgID.input_or_sync_cell));
-    try writer.writeInt(u32, pos[0], .little);
-    try writer.writeInt(u32, pos[1], .little);
-    try writer.writeInt(u8, value.encode(), .little);
-    client.WebsocketHandler.write(c.handle, buffer.items, false) catch |err| {
+    var writer = std.Io.Writer.Allocating.init(c.allocator);
+    defer writer.deinit();
+    try writer.writer.writeByte(@intFromEnum(MsgID.input_or_sync_cell));
+    try writer.writer.writeInt(u32, pos[0], .little);
+    try writer.writer.writeInt(u32, pos[1], .little);
+    try writer.writer.writeInt(u8, value.encode(), .little);
+    client.WebsocketHandler.write(c.handle, writer.written(), false) catch |err| {
         std.log.err("Failed to write message: {any}", .{err});
         return err;
     };
@@ -93,48 +81,48 @@ pub fn msg_sync_cursors(c: *client.Client, last_cursors: []const client.TrackedC
     if (delete_cursor == 0 and send_cursor.count() == 0) {
         return; // No cursors to sync
     }
-    var buffer = std.ArrayList(u8).init(c.allocator);
-    defer buffer.deinit();
-    var writer = buffer.writer();
+    var writer = std.Io.Writer.Allocating.init(c.allocator); //buffer.writer();
+    defer writer.deinit();
+
     if (delete_cursor > 0) {
-        try writer.writeByte(@intFromEnum(MsgID.sync_cursors_delete));
-        try writer.writeInt(u16, @truncate(delete_cursor), .little);
+        try writer.writer.writeByte(@intFromEnum(MsgID.sync_cursors_delete));
+        try writer.writer.writeInt(u16, @truncate(delete_cursor), .little);
         for (last_cursors, 0..) |lc, old_idx| {
             if (!same_cursors.isSet(old_idx)) {
-                try writer.writeInt(u32, lc.client_id, .little);
+                try writer.writer.writeInt(u32, lc.client_id, .little);
             }
         }
     } else {
-        try writer.writeByte(@intFromEnum(MsgID.sync_cursors));
+        try writer.writer.writeByte(@intFromEnum(MsgID.sync_cursors));
     }
 
     const quad_pos_px = @Vector(2, i32){ @as(i32, @intCast(c.quad_rect.x * game.GRID_SIZE * game.CELL_PIXEL_SIZE)), @as(i32, @intCast(c.quad_rect.y * game.GRID_SIZE * game.CELL_PIXEL_SIZE)) };
-    try writer.writeInt(u16, @intCast(c.quad_rect.x), .little);
-    try writer.writeInt(u16, @intCast(c.quad_rect.y), .little);
+    try writer.writer.writeInt(u16, @intCast(c.quad_rect.x), .little);
+    try writer.writer.writeInt(u16, @intCast(c.quad_rect.y), .little);
 
     for (new_cursors, 0..) |new_c, new_idx| {
         if (!send_cursor.isSet(new_idx)) continue;
-        try writer.writeInt(u32, new_c.client_id, .little);
-        try writer.writeInt(i16, @as(i16, @truncate(@as(i32, @intCast(new_c.pos[0])) - quad_pos_px[0])), .little);
-        try writer.writeInt(i16, @as(i16, @truncate(@as(i32, @intCast(new_c.pos[1])) - quad_pos_px[1])), .little);
+        try writer.writer.writeInt(u32, new_c.client_id, .little);
+        try writer.writer.writeInt(i16, @as(i16, @truncate(@as(i32, @intCast(new_c.pos[0])) - quad_pos_px[0])), .little);
+        try writer.writer.writeInt(i16, @as(i16, @truncate(@as(i32, @intCast(new_c.pos[1])) - quad_pos_px[1])), .little);
     }
 
-    client.WebsocketHandler.write(c.handle, buffer.items, false) catch |err| {
+    client.WebsocketHandler.write(c.handle, writer.written(), false) catch |err| {
         std.log.err("Failed to write message: {any}", .{err});
         return err;
     };
 }
 
-pub fn msg_parse_view(reader: std.io.AnyReader) !struct {
+pub fn msg_parse_view(reader: *std.Io.Reader) !struct {
     cell_rect: rect.Rect,
     cursor_pos: @Vector(2, u32),
 } {
-    const x = try reader.readInt(u16, .little);
-    const y = try reader.readInt(u16, .little);
-    const width = try reader.readInt(u16, .little);
-    const height = try reader.readInt(u16, .little);
-    const cursor_x = try reader.readInt(u32, .little);
-    const cursor_y = try reader.readInt(u32, .little);
+    const x = try reader.takeInt(u16, .little);
+    const y = try reader.takeInt(u16, .little);
+    const width = try reader.takeInt(u16, .little);
+    const height = try reader.takeInt(u16, .little);
+    const cursor_x = try reader.takeInt(u32, .little);
+    const cursor_y = try reader.takeInt(u32, .little);
 
     return .{
         .cell_rect = rect.create(x, y, width, height),
@@ -161,92 +149,113 @@ pub fn msg_send_nick(c: *client.Client, nick: []const u8) !void {
         std.log.err("Nick too long: {s}", .{nick});
         return error.InvalidNick;
     }
-    var buffer = std.ArrayList(u8).init(c.allocator);
-    defer buffer.deinit();
-    var writer = buffer.writer();
-    try writer.writeByte(@intFromEnum(MsgID.update_nick));
-    try writer.writeAll(nick);
-    client.WebsocketHandler.write(c.handle, buffer.items, false) catch |err| {
+    var alloc = std.Io.Writer.Allocating.init(c.allocator);
+    defer alloc.deinit();
+    try alloc.writer.writeByte(@intFromEnum(MsgID.update_nick));
+    try alloc.writer.writeAll(nick);
+    client.WebsocketHandler.write(c.handle, alloc.written(), false) catch |err| {
         std.log.err("Failed to write message: {any}", .{err});
         return err;
     };
 }
 
-//pub fn msg_parse_update_nick(reader: std.io.AnyReader, input: []u8) !void {
+//pub fn msg_parse_update_nick(reader: *std.Io.Reader, input: []u8) !void {
 //    const buf = try reader.readBoundedBytes(profile_session.NICK_MAX_LENGTH);
 //    return .{ .nick = buf.buffer, .nick_len = buf.len };
 //}
 
-pub fn msg_parse_session_negotiation(reader: std.io.AnyReader) !?struct {
+pub fn msg_parse_session_negotiation(reader: *std.Io.Reader) !?struct {
     profile_id: [profile_session.SESSION_ID_LENGTH]u8,
 } {
     const ses = try reader.readBoundedBytes(profile_session.SESSION_ID_LENGTH);
-    if(ses.len != profile_session.SESSION_ID_LENGTH) {
+    if (ses.len != profile_session.SESSION_ID_LENGTH) {
         return null;
     }
     return .{
-        .profile_id = ses.buffer, 
+        .profile_id = ses.buffer,
     };
 }
 
 pub fn msg_ready(c: *client.Client) !void {
-    var buffer = std.ArrayList(u8).init(c.allocator);
-    defer buffer.deinit();
-    var writer = buffer.writer();
-    try writer.writeByte(@intFromEnum(MsgID.ready));
-    try writer.writeInt(u32, game.state.board.size[0], .little);
-    try writer.writeInt(u32, game.state.board.size[1], .little);
-    try writer.writeInt(u32, c.session.num_clues_solved, .little);
-    try writer.writeInt(u32, c.session.score, .little);
+    var writer = std.Io.Writer.Allocating.init(c.allocator);
+    defer writer.deinit();
+    try writer.writer.writeByte(@intFromEnum(MsgID.ready));
+    try writer.writer.writeInt(u32, game.state.board.size[0], .little);
+    try writer.writer.writeInt(u32, game.state.board.size[1], .little);
+    try writer.writer.writeInt(u32, c.session.num_clues_solved, .little);
+    try writer.writer.writeInt(u32, c.session.score, .little);
 
-    var session_hash = std.hash.Adler32.init();
+    var session_hash: std.hash.Adler32 = .{};
     session_hash.update(&std.mem.toBytes(c.session.profile_id));
     session_hash.update(&std.mem.toBytes(game.state.board.uid));
-    try writer.writeInt(u32, session_hash.final(), .little);
+    try writer.writer.writeInt(u32, session_hash.adler, .little);
 
-
-    client.WebsocketHandler.write(c.handle, buffer.items, false) catch |err| {
+    client.WebsocketHandler.write(c.handle, writer.written(), false) catch |err| {
         std.log.err("Failed to write message: {any}", .{err});
         return err;
     };
 }
 
 pub fn msg_sync_block(c: *client.Client, quad: *game.Quad) !void {
-    var buffer = std.ArrayList(u8).init(c.allocator);
-    defer buffer.deinit();
-    var writer = buffer.writer();
-    try writer.writeInt(u32, quad.x, .little);
-    try writer.writeInt(u32, quad.y, .little);
+    var writer = std.Io.Writer.Allocating.init(c.allocator);
+    defer writer.deinit();
+    try writer.writer.writeInt(u32, quad.x, .little);
+    try writer.writer.writeInt(u32, quad.y, .little);
     var i: usize = 0;
     while (i < game.GRID_LEN) : (i += 1) {
-        try writer.writeInt(u8, quad.input[i].encode(), .little);
+        try writer.writer.writeInt(u8, quad.input[i].encode(), .little);
     }
-    try writer.writeInt(u16, @intCast(quad.clues.items.len), .little);
+    try writer.writer.writeInt(u16, @intCast(quad.clues.items.len), .little);
     for (quad.clues.items) |clue| {
-        try writer.writeInt(u8, @intCast(clue.pos[0] - (quad.x * game.GRID_SIZE)), .little);
-        try writer.writeInt(u8, @intCast(clue.pos[1] - (quad.y * game.GRID_SIZE)), .little);
-        try writer.writeInt(u8, @intFromEnum(clue.dir), .little);
-        try writer.writeInt(u16, @intCast(clue.clue.len), .little);
-        try writer.writeAll(clue.clue);
+        try writer.writer.writeInt(u8, @intCast(clue.pos[0] - (quad.x * game.GRID_SIZE)), .little);
+        try writer.writer.writeInt(u8, @intCast(clue.pos[1] - (quad.y * game.GRID_SIZE)), .little);
+        try writer.writer.writeInt(u8, @intFromEnum(clue.dir), .little);
+        try writer.writer.writeInt(u16, @intCast(clue.clue.len), .little);
+        try writer.writer.writeAll(clue.clue);
     }
-    var stream = std.io.fixedBufferStream(buffer.items);
-    var compressed_stream = std.ArrayList(u8).init(c.allocator);
-    defer compressed_stream.deinit();
-    var compressed_writer = compressed_stream.writer();
-    try compressed_writer.writeByte(@intFromEnum(MsgID.sync_block));
-    try std.compress.zlib.compress(stream.reader(), compressed_writer, .{
-            .level = .default
-    });
-    client.WebsocketHandler.write(c.handle, compressed_stream.items, false) catch |err| {
+    writer.writer.flush() catch |err| {
+        std.log.err("Failed to flush block data: {any}", .{err});
+        return err;
+    };
+
+    const compress_bounds = z.compressBound(writer.written().len);
+    var compress_alloc = try std.Io.Writer.Allocating.initCapacity(c.allocator, compress_bounds + 1);
+    defer compress_alloc.deinit();
+    try compress_alloc.writer.writeByte(@intFromEnum(MsgID.sync_block));
+    
+    var zs: z.z_stream = .{
+        .avail_in = @intCast(writer.written().len),
+        .next_in = writer.written()[0..].ptr,
+        .next_out = compress_alloc.writer.unusedCapacitySlice()[0..].ptr,
+        .avail_out  = @intCast(compress_alloc.writer.unusedCapacityLen()) 
+    };
+    var res = z.deflateInit2(&zs, z.Z_DEFAULT_COMPRESSION, z.Z_DEFLATED, 15 | 16, 8, z.Z_DEFAULT_STRATEGY); 
+    if(res != z.Z_OK) {
+        std.log.err("Failed to init zlib deflate: {d}", .{res});
+        return error.CompressionError;
+    }
+    res = z.deflate(&zs, z.Z_FINISH);
+    if (res != z.Z_STREAM_END) {
+        std.log.err("Failed to deflate data: {d}", .{res});
+        return error.CompressionError;
+    }
+    res = z.deflateEnd(&zs);
+    if (res != z.Z_OK) {
+        std.log.err("Failed to end deflate: {d}", .{res});
+        return error.CompressionError;
+    }
+    compress_alloc.writer.advance(zs.total_out);
+   
+    client.WebsocketHandler.write(c.handle, compress_alloc.written(), false) catch |err| {
         std.log.err("Failed to write message: {any}", .{err});
         return err;
     };
 }
 
-pub fn msg_parse_input(reader: std.io.AnyReader) !MsgInput {
-    const x = try reader.readInt(u32, .little);
-    const y = try reader.readInt(u32, .little);
-    const input = try reader.readInt(u8, .little);
+pub fn msg_parse_input(reader: *std.Io.Reader) !MsgInput {
+    const x = try reader.takeInt(u32, .little);
+    const y = try reader.takeInt(u32, .little);
+    const input = try reader.takeInt(u8, .little);
 
     return .{ .pos = .{ x, y }, .input = switch (input) {
         @intFromEnum(game.Value.empty) => game.Value.empty,

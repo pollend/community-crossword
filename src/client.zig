@@ -9,13 +9,15 @@ const resiliance = @import("resiliance.zig");
 const profile_session = @import("profile_session.zig");
 pub const WebsocketHandler = WebSockets.Handler(Client);
 pub const nanoid = @import("nanoid.zig");
+pub const bounded_array = @import("bounded_array.zig");
+
 pub const SESSION_COOKIE_ID = "_session";
 
 pub const NICK_MAX_LENGTH: usize = 64;
 
 pub const Client = @This();
 pub const InputRateLimiter = resiliance.rate_limiter(15, 5 * std.time.ms_per_s, 10 * std.time.ms_per_s);
-pub const NickBoundedArray = std.BoundedArray(u8, NICK_MAX_LENGTH);
+pub const NickBoundedArray = bounded_array.BoundedArray(u8, NICK_MAX_LENGTH);
 
 pub const TrackedCursors = struct {
     client_id: u32,
@@ -47,7 +49,7 @@ allocator: std.mem.Allocator,
 tracked_cursors_pos: std.ArrayList(TrackedCursors),
 client_id: u32 = 0, // Unique identifier for the client
 cursor_pos: @Vector(2, u32) = .{0,0},
-active_timestamp: i64 = 0, // Timestamp of the last activity from the client
+active_timestamp: std.time.Timer , // Timestamp of the last activity from the client
 nick: NickBoundedArray,
 input_rate_limiter: InputRateLimiter = .{},
 
@@ -57,16 +59,18 @@ pub fn upgrade(allocator: std.mem.Allocator, r: zap.Request) !*Client {
         if(try r.getCookieStr(allocator, SESSION_COOKIE_ID)) |c| {
             std.log.info("Found session cookie: {s}: {any}", .{c, c.len});
             defer allocator.free(c);
+
             if(profile_session.ProfileSession.parse_cookie(game.state.gpa, game.state.session_key, c) catch  |err| fl: {
                 std.log.err("Failed to parse session cookie: {any}", .{err});
                 break :fl null;
-            } ) |session| {
-                if(!session.is_expired()) {
-                    break :profile session;
+            }) |session| {
+                var sess = session;
+                if(!sess.is_expired()) {
+                    break :profile sess;
                 }
             } 
         }
-        return error.InvalidCookie;
+        break :profile profile_session.ProfileSession.empty(std.time.s_per_day * 30);
     };
     game.state.client_lock.lock();
     defer game.state.client_lock.unlock();
@@ -84,14 +88,14 @@ pub fn upgrade(allocator: std.mem.Allocator, r: zap.Request) !*Client {
     client.* = .{
         .lock = .{},
         .session = profile,
-        .active_timestamp = std.time.timestamp(),
+        .active_timestamp = std.time.Timer.start() catch unreachable, //std.time.timestamp(),
         .allocator = allocator,
         .handle = undefined,
         .client_id = game.state.client_id, 
         .cell_rect = rect.empty(),
         .quad_rect = rect.empty(),
-        .tracked_cursors_pos = std.ArrayList(TrackedCursors).init(allocator),
-        .nick = std.BoundedArray(u8, NICK_MAX_LENGTH).init(0) catch unreachable,
+        .tracked_cursors_pos = .empty, //std.ArrayList(TrackedCursors).init(allocator),
+        .nick = NickBoundedArray.init(0) catch unreachable,//std.BoundedArray(u8, NICK_MAX_LENGTH).init(0) catch unreachable,
         .settings = .{ 
             .on_open = on_open_websocket, 
             .on_close = on_close_websocket,
@@ -107,7 +111,7 @@ pub fn upgrade(allocator: std.mem.Allocator, r: zap.Request) !*Client {
 pub fn deinit(self: *Client) void {
     self.lock.lock();
     defer self.lock.unlock();
-    self.tracked_cursors_pos.deinit();
+    self.tracked_cursors_pos.deinit(self.allocator);
     game.state.board.unregister_client_board(self, self.quad_rect);
 }
 
@@ -159,15 +163,14 @@ fn on_message_websocket(
         c.lock.lock();
         defer c.lock.unlock();
 
-        var stream = std.io.fixedBufferStream(buffer);
-        var reader = stream.reader();
-        const msg_id = reader.readEnum(net.MsgID, .little) catch |err| {
+        var reader = std.Io.Reader.fixed(buffer);
+        const msg_id = reader.takeEnum(net.MsgID, .little) catch |err| {
             std.log.err("Failed to read message type: {any}", .{err});
             return;
         };
         switch (msg_id) {
             .update_nick => {
-                c.nick = try reader.readBoundedBytes(NICK_MAX_LENGTH);
+                c.nick.len = try reader.readSliceShort(c.nick.buffer[0..]);
                 std.debug.print("updating nick: {any} - {s}\n", .{c.client_id, c.nick.slice()});
                 game.state.global.update_nick(c.session.profile_id, c.nick.slice());
                 try net.msg_send_nick(c, c.nick.slice());
@@ -175,7 +178,7 @@ fn on_message_websocket(
             .set_view => {
                 const board = &game.state.board;
                 const quad_last_rect = c.quad_rect;
-                const msg  = try net.msg_parse_view(reader.any());
+                const msg  = try net.msg_parse_view(&reader);
                 const quad_rect = game.map_to_quad(msg.cell_rect);
                 if(quad_rect.width * quad_rect.height > 9) {
                     std.log.warn("Client view is too large: {any}", .{quad_rect});
@@ -184,7 +187,7 @@ fn on_message_websocket(
                 c.cursor_pos = msg.cursor_pos;
                 c.cell_rect = msg.cell_rect; 
                 c.quad_rect = quad_rect;
-                c.active_timestamp = std.time.timestamp();
+                c.active_timestamp.reset(); // = std.time.timestamp();
                 game.state.board.update_client_rect(c, quad_last_rect, c.quad_rect);
                 var iter = c.quad_rect.iterator();
                 while (iter.next()) |pos| {
@@ -203,10 +206,10 @@ fn on_message_websocket(
                     std.log.warn("Client {any} is sending inputs too fast, ignoring input", .{c.client_id});
                     return;
                 }
-                c.active_timestamp = std.time.timestamp();
+                c.active_timestamp.reset(); 
 
                 const board = &game.state.board;
-                const input = try net.msg_parse_input(reader.any());
+                const input = try net.msg_parse_input(&reader);
                 if(game.to_quad_index(game.map_to_quad_pos(input.pos), game.to_quad_size(board.size))) |update_quad_idx| {
                     {
                         board.quads[update_quad_idx].client_lock.lock();
@@ -223,7 +226,7 @@ fn on_message_websocket(
                         }
                     }
                     {
-                        var tmp: [@sizeOf(*game.Clue) * 6]u8 = undefined;
+                        var tmp: [@sizeOf(*game.Clue) * 32]u8 = undefined;
                         var fba = std.heap.FixedBufferAllocator.init(&tmp);
                         var clues = try std.ArrayList(*game.Clue).initCapacity(fba.allocator(), 6);
                         try board.quads[update_quad_idx].get_crossing_clues(input.pos, &clues);

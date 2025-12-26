@@ -2,14 +2,15 @@
     .name = .big_word_search,
     .version = "0.0.0",
     .fingerprint = 0x8f212042a9d2f905, // Changing this has security and trust implications.
-    .minimum_zig_version = "0.14.1",
+    .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .zap = .{
-            .path = "./deps/zap",
+            .url = "git+https://github.com/zigzap/zap.git#76679f308c702cd8880201e6e93914e1d836a54b",
+            .hash = "zap-0.10.6-GoeB8w-EJABTkxyoGH_Z8oMBYMxTBvn7YWk-DrJOHuDO",
         },
-        .aws = .{
-            .url = "git+https://github.com/elerch/aws-sdk-for-zig.git#3979d32a1d399e2a8f5d967b392160a3dd099878",
-            .hash = "aws-0.0.1-SbsFcJDcCQBLsXKOoLLMSKGvmlFiosiGArxAbQPCQhKv",
+        .zlib = .{
+            .url = "git+https://github.com/allyourcodebase/zlib#3599c16d41dbe749ae51b0ff7ab864c61adc779a",
+            .hash = "zlib-1.3.1-ZZQ7lc8NAABUbHzDe_cSWboCqMbrLkVwvFkKnojgeiT2",
         },
     },
     .paths = .{
