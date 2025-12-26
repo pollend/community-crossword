@@ -1,10 +1,11 @@
 version: '3.8'
 services:
   # Zig application container
-  zig-app:
+  community-crossword:
     build:
       context: .
       dockerfile: Dockerfile
+    restart: always
     ports:
       - "3010:3010"
     environment:

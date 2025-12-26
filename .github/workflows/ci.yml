@@ -53,7 +53,7 @@ jobs:
           git fetch
           git checkout $GIT_HASH
           source /app/community-crossword.env
-          docker compose -f deploy.yml up --build --force-recreate --no-deps  -d community-crossword
+          docker compose -f deploy.yml up --build --force-recreate --no-deps -d 
 
     - name: Type check and build
       run: VITE_WS_URL='wss://community-crossword.com' VITE_APP_URL='https://community-crossword.com'  VITE_APP_S3='https://crossword.sfo3.digitaloceanspaces.com' npm run build
