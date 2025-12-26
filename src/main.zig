@@ -37,7 +37,7 @@ pub fn on_request(r: zap.Request) !void {
             }
             return;
         }
-        if (std.mem.eql(u8, path, "global.highscore")) {
+        if (std.mem.eql(u8, path, "/global.highscore")) {
             var allocator = std.Io.Writer.Allocating.init(game.state.gpa);
             defer allocator.deinit();
             game.state.global.encode(&allocator.writer) catch |e| {
