@@ -224,7 +224,7 @@ pub fn FixedHighscoreTable(comptime size: usize) type {
                 self.keys[insert_index] = key;
                 self.scores[insert_index] = score;
             } else if (insert_index > found_index) {
-                std.log.warn("Tampering: Inserting entry with a lower score than existing entry for key {d}", .{key});
+                std.log.info("Tampering: Inserting entry with a lower score than existing entry for key {d}", .{key});
             } else {
                 found_index = @min(found_index, self.table.len - 1);
                 self.num_entries = @max(self.num_entries, found_index + 1);

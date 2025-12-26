@@ -148,7 +148,7 @@ pub fn write_session(
     try writer.writeInt(u64, self.last_refresh.read() + self.refresh_offset, .little); // last modified timestamp
     try writer.writeInt(u32, self.num_clues_solved, .little);
     try writer.writeInt(u32, self.score, .little);
-    std.debug.print("Wrote profile session: {d} with {d} clues solved, score: {d}\n", .{
+    std.log.info("Wrote profile session: {d} with {d} clues solved, score: {d}\n", .{
         self.profile_id,
         self.num_clues_solved,
         self.score,
@@ -189,16 +189,13 @@ test "serialize and deserialize" {
     );
     defer clue.deinit();
     session.update_solved(&clue);
-    
-    var buffer = std.ArrayList(u8).init(allocator);
-    defer buffer.deinit();
-    var writer = buffer.writer();
-    try session.write_session(writer.any());
+   
+    var writer = std.Io.Writer.Allocating.init(allocator);
+    defer writer.deinit();
 
-    var stream = std.io.fixedBufferStream(buffer.items);
-    var reader = stream.reader();
-    
-    const loaded_session = try ProfileSession.load_session(reader.any());
+    try session.write_session(&writer.writer);
+    var reader = std.io.Reader.fixed(writer.written());
+    const loaded_session = try ProfileSession.load_session(&reader);
 
     try std.testing.expectEqual(session.profile_id, loaded_session.profile_id);
     try std.testing.expectEqual(session.num_clues_solved, loaded_session.num_clues_solved);
