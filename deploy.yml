@@ -2,6 +2,7 @@ version: '3.8'
 services:
   # Zig application container
   community-crossword:
+    env_file: /app/community-crossword.env
     build:
       context: .
       dockerfile: Dockerfile
