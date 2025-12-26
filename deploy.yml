@@ -16,6 +16,4 @@ services:
       - "ALLOW_ORIGINS=${ALLOW_ORIGINS}"
     volumes:
       - /app/community-crossword:/app/data
-    depends_on:
-      - web-dev
 

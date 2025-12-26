@@ -38,23 +38,22 @@ jobs:
     - name: Install dependencies
       run: npm ci
 
-    - name: Build Server
-      run: |
-        docker build -t crossword .
-        docker save crossword:latest > crossword.tar
-
     - name: deploy-server 
       if: github.ref == 'refs/heads/main'
       uses: appleboy/ssh-action@v1
+      env:
+        GIT_HASH: ${{ github.sha }}
       with:
         host: ${{ secrets.HOST }}
         username: root 
         key: ${{ secrets.KEY }}
+        envs: GIT_HASH
         script: |
           cd /build/community-crossword
-          git pull origin master
+          git fetch
+          git checkout $GIT_HASH
           source /app/community-crossword.env
-          docker compose up --build --force-recreate --no-deps -f deploy.yml -d community-crossword
+          docker compose -f deploy.yml up --build --force-recreate --no-deps  -d community-crossword
 
     - name: Type check and build
       run: VITE_WS_URL='wss://community-crossword.com' VITE_APP_URL='https://community-crossword.com'  VITE_APP_S3='https://crossword.sfo3.digitaloceanspaces.com' npm run build
