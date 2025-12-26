@@ -2,7 +2,6 @@ version: '3.8'
 services:
   # Zig application container
   community-crossword:
-    env_file: /app/community-crossword.env
     build:
       context: .
       dockerfile: Dockerfile
@@ -12,7 +11,7 @@ services:
     environment:
       - "PORT=3010"
       - "THREADS=4"
-      - "CROSSWORD_LOAD=${CROSSWORD_LOAD}"
+      - "CROSSWORD_LOAD=/app/data/crossword.map"
       - "DOMAIN=${DOMAIN}"
       - "SESSION_KEY=${SESSION_KEY}"
       - "ALLOW_ORIGINS=${ALLOW_ORIGINS}"
