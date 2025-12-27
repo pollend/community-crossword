@@ -1,10 +1,11 @@
 const std = @import("std");
-const profile_session = @import("profile_session.zig");
-const game = @import("game.zig");
-const client = @import("client.zig");
-pub const HIGHSCORE_MAGIC_NUMBER: u32 = 0x48495343; // "HISC"
-pub const bounded_array = @import("bounded_array.zig");
 
+pub const bounded_array = @import("bounded_array.zig");
+const client = @import("client.zig");
+const game = @import("game.zig");
+const profile_session = @import("profile_session.zig");
+
+pub const HIGHSCORE_MAGIC_NUMBER: u32 = 0x48495343; // "HISC"
 pub const HighscoreVersion = enum(u16) {
     unknown = 0,
     v0000 = 1, // Initial version

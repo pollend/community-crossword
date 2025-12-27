@@ -1,10 +1,12 @@
 const std = @import("std");
 
+const zap = @import("zap");
+
 const client = @import("client.zig");
 const game = @import("game.zig");
-const rect = @import("rect.zig");
 const profile_session = @import("profile_session.zig");
-const zap = @import("zap");
+const rect = @import("rect.zig");
+
 const z = @cImport({
     @cInclude("zlib.h");
 });

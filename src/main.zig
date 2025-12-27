@@ -1,14 +1,15 @@
 const std = @import("std");
+const expect = std.testing.expect;
+
+const aws = @import("aws");
 const zap = @import("zap");
 const WebSockets = zap.WebSockets;
+
 const client = @import("client.zig");
 const game = @import("game.zig");
-const rect = @import("rect.zig");
-const aws = @import("aws");
-const evict_fifo = @import("evict_fifo.zig");
-const profile_session = @import("profile_session.zig");
-const nanoid = @import("nanoid.zig");
 const high_score_table = @import("high_score_table.zig");
+const profile_session = @import("profile_session.zig");
+const rect = @import("rect.zig");
 
 fn on_upgrade(r: zap.Request, target_protocol: []const u8) !void {
     // make sure we're talking the right protocol
@@ -304,8 +305,6 @@ pub fn main() !void {
         .sync_game_timer = std.time.Timer.start() catch unreachable,
         .running = std.atomic.Value(bool).init(true),
 
-        .client_pool = .init(allocator),
-
         .session_key = buf,
         .map_key = crossword_map,
         .data_dir = data_dir,
@@ -379,10 +378,8 @@ pub fn main() !void {
     background_worker.join();
 }
 
-const expect = std.testing.expect;
 test {
     _ = rect;
-    _ = evict_fifo;
     _ = profile_session;
     _ = high_score_table;
 }

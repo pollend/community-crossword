@@ -4,14 +4,14 @@
     .fingerprint = 0x59d70aa89271d0, // Changing this has security and trust implications.
     .minimum_zig_version = "0.15.2",
     .dependencies = .{
+        .ziglangSet = .{
+            .url = "git+https://github.com/deckarep/ziglang-set.git#d63232266deb61c334da8f198e32a3fb51012650",
+            .hash = "ziglangSet-0.0.1-VUjv0hoUAgAxi3Zu4l_6QRnST7KqzKJW9n0FV1WKfweT",
+        },
         .sqlite = .{
             .url = "git+https://github.com/vrischmann/zig-sqlite.git#0b75ba276d34de3141ec1697e3ef7c836d7b38e7",
             .hash = "sqlite-3.48.0-F2R_a8eODgD9X8XjvWlZ1K7C-tDuHae4FuShM2N-yIT2",
         },
-        .ziglangSet = .{
-            .url = "git+https://github.com/deckarep/ziglang-set.git#d63232266deb61c334da8f198e32a3fb51012650",
-            .hash = "ziglangSet-0.0.1-VUjv0hoUAgAxi3Zu4l_6QRnST7KqzKJW9n0FV1WKfweT",
-        }
     },
     .paths = .{
         "build.zig",

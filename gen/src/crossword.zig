@@ -1,8 +1,9 @@
 const std = @import("std");
-const set = @import("ziglangSet");
-const trie = @import("trie.zig");
 const assert = std.debug.assert;
 
+const set = @import("ziglangSet");
+
+const trie = @import("trie.zig");
 
 pub const Direction = enum(u1) {
     Across,
@@ -10,7 +11,7 @@ pub const Direction = enum(u1) {
 };
 
 pub const IncompleteCell = struct {
-    x: usize, 
+    x: usize,
     y: usize,
 };
 
@@ -18,7 +19,7 @@ pub const BLOCK_CHAR = '@'; // Character used to represent a blocked cell
 
 pub fn normalize_ascii(c: u8) u8 {
     var cc = std.ascii.toLower(c);
-    if(cc == '-' or cc == ' ') {
+    if (cc == '-' or cc == ' ') {
         cc = '-'; // Normalize '-' and ' ' to a single space
     }
     return cc; // Return as is if already lowercase or not a letter
@@ -29,7 +30,7 @@ pub const ClueNode = struct {
     y: usize, // y-coordinate of the cell
     dir: Direction, // Direction of the clue (Across or Down)
     clue: *trie.Clue, // Pointer to the clue
-    
+
     pub fn deinit(self: *Board) void {
         self.pool.destroy(self);
     }
@@ -62,11 +63,11 @@ pub fn init(allocator: std.mem.Allocator, width: usize, height: usize) !Board {
             .crossing_x = null, // Initialize crossing x pointer to null
             .crossing_y = null, // Initialize crossing y pointer to null
             .ch = ' ', // Initialize character to empty space (0)
-        }; 
+        };
     }
 
     var start_cells = ValidCellsSet.init(allocator);
-    _ = try start_cells.add(CellPos{ .x = 0, .y = 0 }); 
+    _ = try start_cells.add(CellPos{ .x = 0, .y = 0 });
     //var xx: usize = 0;
     //while(xx < width) : (xx += 1) {
     //    start_cells.add(.{ .x = xx, .y = 0 }); // Add the first row as valid start cells
@@ -89,7 +90,7 @@ pub fn init(allocator: std.mem.Allocator, width: usize, height: usize) !Board {
 pub fn deinit(self: *Board) void {
     self.allocator.free(self.cells);
 }
-    
+
 //const WordSearchGraph = struct {
 //    const SelectedIndex = struct {
 //        selected_idx: usize, // Index of the selected character
@@ -103,7 +104,7 @@ pub fn deinit(self: *Board) void {
 //    dict: *crossword_dict.Dictionary,
 //    pub fn init(allocator: std.mem.Allocator, dict: *crossword_dict.Dictionary) !WordSearchGraph {
 //        var items = std.ArrayList(Entry).init(allocator);
-//        errdefer items.deinit(); 
+//        errdefer items.deinit();
 //        try items.append(.{
 //            .node = &dict.root,
 //            .selected = null, // No selected node at the start
@@ -113,7 +114,7 @@ pub fn deinit(self: *Board) void {
 //            .collection = items,
 //        };
 //    }
-//    
+//
 //
 //    pub fn is_exhausted(self: *WordSearchGraph) bool {
 //        return self.collection.items.len == 0;
@@ -122,7 +123,7 @@ pub fn deinit(self: *Board) void {
 //    pub fn deinit(self: *WordSearchGraph) void {
 //        self.collection.deinit();
 //    }
-//    
+//
 //    pub fn backtrack(self: *WordSearchGraph) void {
 //        _ = self.collection.pop(); // Pop the last node
 //        while(self.collection.items.len > 0) {
@@ -160,7 +161,7 @@ pub fn deinit(self: *Board) void {
 //            };
 //            assert(top.node.children[idx] != null);
 //            return top.selected.?;
-//        } 
+//        }
 //        return null;
 //    }
 //
@@ -205,7 +206,7 @@ pub fn deinit(self: *Board) void {
 //                if(last_node.node.clue_index) |clue_idx| {
 //                    // We have a valid clue, return it
 //                    return &dict.clues.items[clue_idx];
-//                } 
+//                }
 //            }
 //            if (WordSearchGraph.advance_random(last_node, rand)) |idx|{
 //                try back_track.collection.append(.{
@@ -239,7 +240,7 @@ pub fn deinit(self: *Board) void {
 //                        back_track.backtrack();
 //                    }
 //                    continue;
-//                } 
+//                }
 //
 //                if((last_node.node.slots_bits & (@as(u32, 1) << @intCast(idx))) != 0) {
 //                    // We have a valid character, continue with the next node
@@ -308,17 +309,17 @@ pub fn can_start_clue_here(
     if (pos.x >= self.width or pos.y >= self.height) {
         return false;
     }
-    if(dir == .Down) {
-        if(pos.y == 0) {
+    if (dir == .Down) {
+        if (pos.y == 0) {
             return true; // The first row can always start a vertical clue
-        } else if((pos.x > 0 and pos.y > 0) and self.get_cell(pos.x, pos.y - 1).ch == BLOCK_CHAR) {
-            return true; 
+        } else if ((pos.x > 0 and pos.y > 0) and self.get_cell(pos.x, pos.y - 1).ch == BLOCK_CHAR) {
+            return true;
         }
-    } else if(dir == .Across) {
-        if(pos.x == 0) {
+    } else if (dir == .Across) {
+        if (pos.x == 0) {
             return true; // The first row can always start a vertical clue
-        } else if((pos.x > 0 and pos.y > 0) and self.get_cell(pos.x - 1, pos.y).ch == BLOCK_CHAR) {
-            return true; 
+        } else if ((pos.x > 0 and pos.y > 0) and self.get_cell(pos.x - 1, pos.y).ch == BLOCK_CHAR) {
+            return true;
         }
     }
     return false;
@@ -330,31 +331,31 @@ fn clear_cell_dir(
     dir: Direction,
 ) void {
     const cell = self.get_cell(pos.x, pos.y);
-    if(dir == .Down) {
-        cell.crossing_y = null; 
-    } else if(dir == .Across) {
+    if (dir == .Down) {
+        cell.crossing_y = null;
+    } else if (dir == .Across) {
         cell.crossing_x = null;
     }
-    if(cell.crossing_x == null and cell.crossing_y == null) {
+    if (cell.crossing_x == null and cell.crossing_y == null) {
         self.valid_start_cells.remove(pos);
-        if(cell.ch == BLOCK_CHAR) {
-            const bottom: CellPos = .{ .x = pos.x, .y = pos.y + 1};
+        if (cell.ch == BLOCK_CHAR) {
+            const bottom: CellPos = .{ .x = pos.x, .y = pos.y + 1 };
             const right: CellPos = .{ .x = pos.x + 1, .y = pos.y };
-            if(can_start_clue_here(self, bottom, .Down)) |v|{
-                if(v == false) {
+            if (can_start_clue_here(self, bottom, .Down)) |v| {
+                if (v == false) {
                     self.valid_start_cells.remove(bottom);
-                    remove_clue_by_cell(self, bottom, .Down);    
+                    remove_clue_by_cell(self, bottom, .Down);
                 }
             }
-            if(can_start_clue_here(self, right, .Across)) |v| {
-                if(v == false) {
+            if (can_start_clue_here(self, right, .Across)) |v| {
+                if (v == false) {
                     self.valid_start_cells.remove(right);
                     remove_clue_by_cell(self, right, .Across);
                 }
             }
-        } 
+        }
         cell.ch = ' '; // Clear the character in the cell
-        if(pos.x == 0 or pos.y == 0) {
+        if (pos.x == 0 or pos.y == 0) {
             self.valid_start_cells.add(pos);
         }
     }
@@ -365,16 +366,16 @@ pub fn cell_is_start_clue(
     pos: CellPos,
     dir: Direction,
 ) ?*ClueNode {
-    if(self.get_cell_or_null(pos.x, pos.y)) |cell| {
-        if(dir == .Across) {
-            if(cell.crossing_x) |cross| {
-                if(cross.x == pos.x and cross.y == pos.y) {
+    if (self.get_cell_or_null(pos.x, pos.y)) |cell| {
+        if (dir == .Across) {
+            if (cell.crossing_x) |cross| {
+                if (cross.x == pos.x and cross.y == pos.y) {
                     return true;
                 }
             }
         } else {
-            if(cell.crossing_y) |cross| {
-                if(cross.x == pos.x and cross.y == pos.y) {
+            if (cell.crossing_y) |cross| {
+                if (cross.x == pos.x and cross.y == pos.y) {
                     return true;
                 }
             }
@@ -387,39 +388,39 @@ pub fn remove_clue_by_cell(
     x: usize,
     y: usize,
     dir: Direction,
-  )  void {
+) void {
     if (x >= self.width or y >= self.height) {
         return null; // Out of bounds
     }
     const cell = self.get_cell(x, y);
-    if(dir == .Across and cell.crossing_x) {
+    if (dir == .Across and cell.crossing_x) {
         const node = cell.crossing_x.?;
-        var i = 0; 
-        while(i < node.clue.word.len) : (i += 1) {
+        var i = 0;
+        while (i < node.clue.word.len) : (i += 1) {
             assert(node.x + i < self.width and node.y < self.height); // Ensure we are within bounds
             assert(self.get_cell(node.x + i, node.y).crossing_x == node);
             clear_cell_dir(self, .{ .x = node.x + i, .y = node.y }, .Across);
         }
-        if(self.get_cell_or_null(x + node.clue.word.len, y)) |c| {
+        if (self.get_cell_or_null(x + node.clue.word.len, y)) |c| {
             assert(c.crossing_y == node);
             clear_cell_dir(self, .{ .x = node.x + node.clue.word.len, .y = node.y }, .Across);
         }
         self.pool.destroy(node);
-    } else if(dir == .Down and cell.crossing_y) {
+    } else if (dir == .Down and cell.crossing_y) {
         const node = cell.crossing_y.?;
-        var i = 0; 
-        while(i < node.clue.word.len) : (i += 1) {
+        var i = 0;
+        while (i < node.clue.word.len) : (i += 1) {
             assert(node.x < self.width and node.y + i < self.height); // Ensure we are within bounds
             assert(self.get_cell(node.x, node.y + i).crossing_y == node);
             clear_cell_dir(self, .{ .x = node.x, .y = node.y + i }, .Down);
         }
-        if(self.get_cell_or_null(x, y + node.clue.word.len)) |c| {
+        if (self.get_cell_or_null(x, y + node.clue.word.len)) |c| {
             assert(c.crossing_y == node);
             clear_cell_dir(self, .{ .x = node.x + node.clue.word.len, .y = node.y }, .Down);
         }
         self.pool.destroy(node);
     }
-    return null; 
+    return null;
 }
 
 pub fn insert_clue_start_cell(
@@ -432,7 +433,7 @@ pub fn insert_clue_start_cell(
     if (x >= self.width or y >= self.height) {
         return false;
     }
-    if(dir == .Across) {
+    if (dir == .Across) {
         const ins = try self.pool.create();
         errdefer self.pool.destroy(ins);
         ins.* = .{
@@ -446,22 +447,22 @@ pub fn insert_clue_start_cell(
             assert(x + i < self.width and y < self.height);
             const cell = self.get_cell(x + 1, y);
             assert(cell.crossing_x == null);
-            assert(if(cell.crossing_y == null) true else cell.ch == normalize_ascii(clue.word[i]));
+            assert(if (cell.crossing_y == null) true else cell.ch == normalize_ascii(clue.word[i]));
 
             self.valid_start_cells.add(.{ .x = x + i, .y = y }); // Add the cell to the valid start cells
             cell.ch = normalize_ascii(clue.word[i]); // Set the character in the cell
             cell.crossing_x = ins; // Set the crossing clue for each cell in the clue
         }
-        if(self.get_cell_or_null(x + clue.word.len, y)) |cell| {
+        if (self.get_cell_or_null(x + clue.word.len, y)) |cell| {
             assert(cell.crossing_x == null);
             assert(cell.ch == ' ' or cell.ch == BLOCK_CHAR);
-            cell.ch = BLOCK_CHAR; 
+            cell.ch = BLOCK_CHAR;
             cell.crossing_x = ins;
-            if(x + clue.word.len + 1 < self.width) {
+            if (x + clue.word.len + 1 < self.width) {
                 self.valid_start_cells.add(.{ .x = x + clue.word.len + 1, .y = y }); // Add the next cell to the valid start cells
             }
-            if(y < self.height) {
-                self.valid_start_cells.add(.{ .x = x + clue.word.len, .y = y + 1}); // Add the next cell to the valid start cells
+            if (y < self.height) {
+                self.valid_start_cells.add(.{ .x = x + clue.word.len, .y = y + 1 }); // Add the next cell to the valid start cells
             }
         }
     } else {
@@ -478,22 +479,22 @@ pub fn insert_clue_start_cell(
             assert(x < self.width and y + i < self.height); // Ensure we are within bounds
             const cell = self.get_cell(x, y + 1);
             assert(cell.crossing_y == null);
-            assert(if(cell.crossing_x == null) true else cell.ch == normalize_ascii(clue.word[i]));
+            assert(if (cell.crossing_x == null) true else cell.ch == normalize_ascii(clue.word[i]));
 
             cell.ch = normalize_ascii(clue.word[i]); // Set the character in the cell
             cell.crossing_y = ins; // Set the crossing clue for each cell in the clue
         }
-        if(self.get_cell_or_null(x, y + clue.word.len)) |cell| {
+        if (self.get_cell_or_null(x, y + clue.word.len)) |cell| {
             assert(cell.crossing_y == null);
             assert(cell.ch == ' ' or cell.ch == BLOCK_CHAR);
-            cell.ch = BLOCK_CHAR; 
-            cell.crossing_y = ins; 
-            
-            if(y + clue.word.len + 1 < self.height and x < self.width) {
-                self.valid_start_cells.add(.{ .x = x , .y = y + clue.word.len + 1 }); // Add the next cell to the valid start cells
+            cell.ch = BLOCK_CHAR;
+            cell.crossing_y = ins;
+
+            if (y + clue.word.len + 1 < self.height and x < self.width) {
+                self.valid_start_cells.add(.{ .x = x, .y = y + clue.word.len + 1 }); // Add the next cell to the valid start cells
             }
-            if(y + clue.word.len < self.height and x + 1 < self.width) {
-                self.valid_start_cells.add(.{ .x = x + 1, .y = y + clue.word.len}); // Add the next cell to the valid start cells
+            if (y + clue.word.len < self.height and x + 1 < self.width) {
+                self.valid_start_cells.add(.{ .x = x + 1, .y = y + clue.word.len }); // Add the next cell to the valid start cells
             }
         }
     }
@@ -518,7 +519,7 @@ pub fn get_cell(self: *Board, x: usize, y: usize) *Cell {
 //    if(old_value.cx == 0) {
 //        return error.CellAlreadyUnset; // Cannot unset a cell that is not part of a clue
 //    }
-//    
+//
 //    self.cells[(y * self.width) + x] = .{ .cx = 0, .cy = old_value.cy, .ch = if(old_value.cy == 0) ' ' else old_value.ch };
 //}
 //

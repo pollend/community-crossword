@@ -1,9 +1,12 @@
 const std = @import("std");
-const crossword_dict = @import("trie.zig");
-const sqlite = @import("sqlite");
-const set = @import("ziglangSet");
 const assert = std.debug.assert;
+
+const set = @import("ziglangSet");
+const sqlite = @import("sqlite");
+
+const crossword_dict = @import("trie.zig");
 const word_dfs = @import("word_dfs.zig");
+
 pub const WIDTH = 384;
 pub const HEIGHT = 384;
 
@@ -605,11 +608,6 @@ fn can_start_clue_here(
 
 
 pub fn main() !void {
-    // Prints to stderr (it's a shortcut based on `std.io.getStdErr()`)
-    //const stdout_file = std.io.getStdOut().writer();
-    //var bw = std.io.bufferedWriter(stdout_file);
-    //const stdout = bw.writer();
-
     var gpa = std.heap.GeneralPurposeAllocator(.{
         .thread_safe = true,
     }){};
@@ -620,64 +618,6 @@ pub fn main() !void {
     var board = try Board.init(allocator);
     defer board.deinit();
 
-
-    //{
-    //    const input = try std.fs.cwd().openFile("train.csv", .{});
-    //    defer input.close();
-    //    const buffer = try allocator.alloc(u8, 1024);
-    //    defer allocator.free(buffer);
-    //    var csv_tokenizer = try csv.CsvTokenizer(std.fs.File.Reader).init(input.reader(), buffer, .{});
-    //    
-    //    var row_index: usize = 0;
-    //    var column_index: usize = 0;
-    //    var clue_text: std.ArrayList(u8) = std.ArrayList(u8).init(allocator);
-    //    var answer_text: std.ArrayList(u8) = std.ArrayList(u8).init(allocator);
-    //    defer clue_text.deinit();
-    //    defer answer_text.deinit();
-
-    //    while (true)  {
-    //        const tk = csv_tokenizer.next() catch |err| {
-    //            std.debug.print("failed on row {any} [{s} -- {s}] \n", .{ row_index, clue_text.items, answer_text.items });
-    //            return err; 
-    //        };
-    //        if(tk) |token| {
-    //            switch (token) {
-    //                .field => |val| {
-    //                    switch(column_index) {
-    //                        1 =>  {
-    //                            clue_text.clearRetainingCapacity();
-    //                            try clue_text.appendSlice(val);
-    //                        },
-    //                        2 =>  {
-    //                            answer_text.clearRetainingCapacity();
-    //                            try answer_text.appendSlice(val);
-    //                        },
-    //                        else => {
-    //                        }
-    //                    }
-    //                    column_index += 1;
-    //                },
-    //                .row_end => {
-    //                    if(row_index >= 1) {
-    //                        dict.insert(.{
-    //                            .word = answer_text.items,
-    //                            .clue = clue_text.items,
-    //                        }) catch |err|{
-    //                            if(err == error.InvalidCharacter) {
-    //                                continue;
-    //                            }
-    //                            return err;
-    //                        };
-    //                    }
-    //                    row_index += 1;
-    //                    column_index = 0;
-    //                },
-    //            }
-    //        } else {
-    //            break;
-    //        }
-    //    } 
-    //}
     var db = try sqlite.Db.init(.{
         .mode = sqlite.Db.Mode{ .File = "./crossword.db" },
         .open_flags = .{
@@ -833,22 +773,26 @@ pub fn main() !void {
 
     var file = try std.fs.cwd().createFile("crossword.map", .{ .truncate = true });
     defer file.close();
-    var writer = file.writer();
-    try writer.writeInt(u32, MAGIC_NUMBER, .little);
-    try writer.writeByte(0);
-    try writer.writeInt(u32, random.int(u32), .little);
-    try writer.writeInt(u32, WIDTH, .little);
-    try writer.writeInt(u32, HEIGHT, .little);
+    var buffer: [4096]u8 = undefined;
+    var writer = file.writer(&buffer);
+    defer writer.end() catch |err| {
+        std.log.err("Failed to finalize leaderboard file: {any}", .{err});
+    };
+    try writer.interface.writeInt(u32, MAGIC_NUMBER, .little);
+    try writer.interface.writeByte(0);
+    try writer.interface.writeInt(u32, random.int(u32), .little);
+    try writer.interface.writeInt(u32, WIDTH, .little);
+    try writer.interface.writeInt(u32, HEIGHT, .little);
     if(board.next) |first_crossing| {
         var it = first_crossing.iterator();
         while (it.next()) |crossing| {
-            try writer.writeInt(u32, @intCast(crossing.x), .little);
-            try writer.writeInt(u32, @intCast(crossing.y), .little);
-            try writer.writeInt(u8, @intFromEnum(crossing.dir), .little);
-            try writer.writeInt(u32, @intCast(crossing.clue.word.len), .little);
-            try writer.writeAll(crossing.clue.word);
-            try writer.writeInt(u32, @intCast(crossing.clue.clue.len), .little);
-            try writer.writeAll(crossing.clue.clue);
+            try writer.interface.writeInt(u32, @intCast(crossing.x), .little);
+            try writer.interface.writeInt(u32, @intCast(crossing.y), .little);
+            try writer.interface.writeInt(u8, @intFromEnum(crossing.dir), .little);
+            try writer.interface.writeInt(u32, @intCast(crossing.clue.word.len), .little);
+            try writer.interface.writeAll(crossing.clue.word);
+            try writer.interface.writeInt(u32, @intCast(crossing.clue.clue.len), .little);
+            try writer.interface.writeAll(crossing.clue.clue);
         }
     } 
 }

@@ -1,7 +1,9 @@
 const std = @import("std");
-const crossword = @import("crossword.zig");
 const assert = std.debug.assert;
-// a = 0, b = 1, c = 2, d = 3, e = 4, f = 5, g = 6, h = 7, i = 8, j = 9, k = 10, l = 11, m = 12, n = 13, o = 14, 
+
+const crossword = @import("crossword.zig");
+
+// a = 0, b = 1, c = 2, d = 3, e = 4, f = 5, g = 6, h = 7, i = 8, j = 9, k = 10, l = 11, m = 12, n = 13, o = 14,
 // p = 15, q = 16, r = 17, s = 18, t = 19, u = 20, v = 21 , w = 22, x = 23, y = 24, z = 25
 // space_dash = 26
 pub const NUM_CHARACTERS = 27; // 26 letters + space/dash
@@ -18,14 +20,14 @@ pub fn is_empty(c: u8) bool {
     return c == ' ' or c == '-';
 }
 
-pub fn ascii_to_index(c: u8) ?usize{
+pub fn ascii_to_index(c: u8) ?usize {
     if (c >= 'a' and c <= 'z') {
         return (c - 'a');
-    } 
+    }
     if (c >= 'A' and c <= 'Z') {
         return (c - 'A');
     }
-    if(c == ' ' or c == '-') {
+    if (c == ' ' or c == '-') {
         return 26; // Assuming 27 is the index for space or dash
     }
     std.debug.print("Invalid character: {c}\n", .{c});
@@ -44,8 +46,8 @@ pub const Node = struct {
     clue_index: ?usize, // index in the clues array, if this node is the end of a word
     //
     pub fn to_ascii_char(self: *const Node) ?u8 {
-        if ( self.index) |idx| {
-            if(idx >= 0 and idx <= 25) {
+        if (self.index) |idx| {
+            if (idx >= 0 and idx <= 25) {
                 return @as(u8, 'a' + idx); // Convert index to ASCII character
             } else if (idx == 26) {
                 return ' '; // Space or dash
@@ -62,8 +64,8 @@ pub const Node = struct {
         return false; // Invalid character
     }
 
-    pub fn random_node_idx (self: *const Node, rng: *std.Random) ?usize{
-        if(self.slots_bits == 0) return null; // No valid slots available
+    pub fn random_node_idx(self: *const Node, rng: *std.Random) ?usize {
+        if (self.slots_bits == 0) return null; // No valid slots available
         var collect: [NUM_CHARACTERS]usize = undefined; // Collect valid children nodes
         var i: usize = 0;
         {
@@ -72,7 +74,7 @@ pub const Node = struct {
                 if ((self.slots_bits & (@as(u32, 1) << @intCast(idx))) != 0) {
                     collect[i] = idx;
                     i += 1; // Increment the index for the next valid child
-                } 
+                }
             }
         }
         return collect[rng.int(usize) % i]; // Randomly select an index from the collected nodes
@@ -81,11 +83,11 @@ pub const Node = struct {
 
 pub const CluesArrayList = std.ArrayList(Clue);
 root: Node,
-clues: CluesArrayList, 
+clues: CluesArrayList,
 allocator: std.mem.Allocator,
 
 pub const Trie = @This();
-pub fn init(allocator: std.mem.Allocator) !Trie{
+pub fn init(allocator: std.mem.Allocator) !Trie {
     return .{
         .root = .{
             .children = [_]?*Node{null} ** NUM_CHARACTERS,
@@ -93,7 +95,7 @@ pub fn init(allocator: std.mem.Allocator) !Trie{
             .clue_index = null,
             .index = null, // No index for the root node
         },
-        .clues = .empty,  
+        .clues = .empty,
         .allocator = allocator,
     };
 }
@@ -123,14 +125,14 @@ pub fn insert(self: *Trie, clue: Clue) !void {
         .word = try self.allocator.dupe(u8, clue.word),
         .clue = try self.allocator.dupe(u8, clue.clue),
     };
-    try self.clues.append(res);
+    try self.clues.append(self.allocator, res);
     errdefer {
         self.allocator.free(res.word);
         self.allocator.free(res.clue);
     }
 
     for (clue.word) |c| {
-        if(ascii_to_index(c)) | index| {
+        if (ascii_to_index(c)) |index| {
             assert(index < NUM_CHARACTERS);
             if (current.children[index]) |n| {
                 current = n;
@@ -142,7 +144,7 @@ pub fn insert(self: *Trie, clue: Clue) !void {
                     .slots_bits = 0, // Initialize slots_bits to 0
                     .index = index, // No index for this node
                 };
-                current.slots_bits |= @as(u32,1) << @intCast(index); // Set the bit for this slot
+                current.slots_bits |= @as(u32, 1) << @intCast(index); // Set the bit for this slot
                 current.children[index] = node;
                 current = node;
             }
@@ -150,4 +152,3 @@ pub fn insert(self: *Trie, clue: Clue) !void {
     }
     current.clue_index = self.clues.items.len - 1; // Set the clue index to the last added clue
 }
-

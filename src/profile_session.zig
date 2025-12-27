@@ -1,17 +1,16 @@
 const std = @import("std");
-const aws = @import("aws");
-const nanoid = @import("./nanoid.zig");
-const evict_fifo = @import("evict_fifo.zig");
-const game = @import("game.zig");
 const Aegis256 = std.crypto.aead.aegis.Aegis256;
+pub const KEY_LENGTH: usize = Aegis256.key_length;
+
+const aws = @import("aws");
 const zdt = @import("zdt");
 
-pub const SESSION_MAGIC_NUMBER: u32 = 0x1FA1ABCE;
+const game = @import("game.zig");
 
 pub const ProfileVersion = enum(u8) { unknown = 0, v0000 = 1 };
-pub const KEY_LENGTH: usize = Aegis256.key_length;
 pub const NICK_MAX_LENGTH: usize = 64;
 pub const MAX_WORD_QUEUE_LENGTH: usize = 32; // maximum number of words to store in the session
+pub const SESSION_MAGIC_NUMBER: u32 = 0x1FA1ABCE;
 
 pub const Solved = struct {
     utc: i64,

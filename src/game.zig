@@ -1050,18 +1050,6 @@ pub fn background_worker() void {
             std.log.err("Failed to write map cache file: {any}", .{err});
         };
     }
-
-    //game.state.board.commit_s3(
-    //    state.gpa,
-    //    state.bucket,
-    //    state.map_key,
-    //    .{
-    //        .region = state.region,
-    //        .client = state.aws_client,
-    //    },
-    //) catch |err| {
-    //    std.log.err("Failed to write board cache to S3: {any}", .{err});
-    //};
 }
 
 pub const State = struct {
@@ -1081,9 +1069,7 @@ pub const State = struct {
     origins: std.ArrayList([]const u8),
 
     global: HighscoreTable100,
-
     gpa: std.mem.Allocator,
-    client_pool: std.heap.MemoryPool(client.Client),
 
     board: Board,
 };
